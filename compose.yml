@@ -1,0 +1,7 @@
+services:
+  tests:
+    image: trueasync/php-true-async:latest
+    working_dir: /app
+    volumes:
+      - .:/app
+    command: php vendor/bin/phpunit --colors=always

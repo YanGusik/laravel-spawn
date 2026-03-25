@@ -21,6 +21,7 @@ class ServeCommand extends Command
         $this->info("Starting TrueAsync HTTP server on {$host}:{$port}");
 
         $server = new HttpServer($this->laravel, $host, $port);
+        $server->prepareApp();
         $server->start();
     }
 }

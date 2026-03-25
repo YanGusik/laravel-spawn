@@ -15,4 +15,8 @@ phpunit.result.cache
 docs_components/
 .idea/
 vendor/
+.claude
 CLAUDE.md
+laravel-true-async-test
+ide-stubs
+DEVLOG.md
