@@ -3,7 +3,7 @@
 namespace TrueAsync\Laravel\Console;
 
 use Illuminate\Console\Command;
-use TrueAsync\Laravel\Server\HttpServer;
+use TrueAsync\Laravel\Server\DevServer;
 
 class ServeCommand extends Command
 {
@@ -20,7 +20,7 @@ class ServeCommand extends Command
 
         $this->info("Starting TrueAsync HTTP server on {$host}:{$port}");
 
-        $server = new HttpServer($this->laravel, $host, $port);
+        $server = new DevServer($this->laravel, $host, $port);
         $server->prepareApp();
         $server->start();
     }

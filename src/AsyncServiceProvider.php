@@ -3,6 +3,7 @@
 namespace TrueAsync\Laravel;
 
 use Illuminate\Support\ServiceProvider;
+use TrueAsync\Laravel\Console\FrankenServeCommand;
 use TrueAsync\Laravel\Console\ServeCommand;
 
 class AsyncServiceProvider extends ServiceProvider
@@ -13,6 +14,7 @@ class AsyncServiceProvider extends ServiceProvider
 
         $this->commands([
             ServeCommand::class,
+            FrankenServeCommand::class,
         ]);
     }
 

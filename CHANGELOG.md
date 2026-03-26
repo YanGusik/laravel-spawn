@@ -12,11 +12,14 @@
 - `ScopedServiceProxy` — lightweight proxy cached by Facades; delegates every call to `coroutine_context()` so concurrent requests never share state
 - `config/async.php` — publishable config with `scoped_services` list
 - `AsyncServiceProvider` — merges config, registers `serve` command, publishes config via `vendor:publish`
-- `HttpServer` — minimal TCP server for local development and adapter testing (will be replaced by FrankenPHP in production)
+- `DevServer` — minimal TCP server for local development only (`async:serve`), analogous to `php artisan serve`
+- `FrankenPhpServer` — production adapter for TrueAsync FrankenPHP (`async:franken`); uses `FrankenPHP\HttpServer::onRequest()`, generates Caddyfile + worker file in `storage/app/trueasync/` and starts the `frankenphp` binary as a subprocess
+- `ServerInterface` — contract for all server adapters (`prepareApp()`, `start()`)
+- `ManagesDatabasePool` trait — shared PDO Pool logic extracted from servers; used by both `DevServer` and `FrankenPhpServer`
 
 - PDO Pool integration for async-safe database access
-  - `HttpServer::configureDatabasePool()` — injects `PDO::ATTR_POOL_ENABLED` and related options into all database connection configs when `async.db_pool.enabled = true`
-  - `HttpServer::warmUpDatabasePool()` — forces the `DatabaseManager` to establish its connection inside the server coroutine before the accept loop starts, so the pool is created in the correct coroutine scope and shared across all request coroutines
+  - `ManagesDatabasePool::configureDatabasePool()` — injects `PDO::ATTR_POOL_ENABLED` and related options into all database connection configs when `async.db_pool.enabled = true`
+  - `ManagesDatabasePool::warmUpDatabasePool()` — forces the `DatabaseManager` to establish its connection inside the server coroutine before the accept loop starts, so the pool is created in the correct coroutine scope and shared across all request coroutines
   - `config/async.php` — extended with `db_pool` section: `enabled`, `min`, `max`, `healthcheck_interval`
 - PHPUnit test suite under `tests/` running inside `trueasync/php-true-async:latest` Docker image
   - `CoroutineContextIsolationTest` — verifies `coroutine_context()` isolation

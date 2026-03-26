@@ -12,6 +12,7 @@ composer.lock
 Thumbs.db
 *.log
 phpunit.result.cache
+.phpunit.result.cache
 docs_components/
 .idea/
 vendor/
