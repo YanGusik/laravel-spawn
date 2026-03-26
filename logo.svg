@@ -7,8 +7,10 @@
       }
 
       .cls-2 {
-        fill: #191919;
-      }
+		fill: #1B1B18
+      } 
+	  
+	  @media (prefers-color-scheme:dark) { .cls-2 { fill: #fff } }
 
       .cls-3 {
         fill: #7846c6;
