@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Contracts;
+namespace Spawn\Laravel\Contracts;
 
 interface ServerInterface
 {

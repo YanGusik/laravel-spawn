@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Server\Concerns;
+namespace Spawn\Laravel\Server\Concerns;
 
 /**
  * Provides PDO Pool configuration and warm-up for async servers.

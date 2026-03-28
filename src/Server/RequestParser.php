@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Server;
+namespace Spawn\Laravel\Server;
 
 use Illuminate\Http\Request;
 

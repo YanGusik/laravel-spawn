@@ -1,15 +1,15 @@
 <?php
 
-namespace TrueAsync\Laravel\Console;
+namespace Spawn\Laravel\Console;
 
 use Illuminate\Console\Command;
-use TrueAsync\Laravel\Server\DevServer;
+use Spawn\Laravel\Server\DevServer;
 
 class ServeCommand extends Command
 {
     protected $signature = 'async:serve
         {--host=0.0.0.0 : The host to listen on}
-        {--port=8080 : The port to listen on}';
+        {--port=8080    : The port to listen on}';
 
     protected $description = 'Start the TrueAsync HTTP server';
 

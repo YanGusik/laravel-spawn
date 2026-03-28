@@ -27,6 +27,9 @@
   - `RequestIsolationTest` — verifies `app('request')` isolation per coroutine
   - `DatabaseIsolationTest` — documents that `db` is intentionally a singleton; PDO Pool handles physical connection isolation at the C level
 
+### Verified
+- `cache`, `mail`, `queue` managers do not hold per-request state — no scoping needed, confirmed via parallel isolation tests
+
 ### Notes
 - `flock(LOCK_EX)` was blocking the entire event loop on concurrent requests — reported to TrueAsync team, fixed in TrueAsync v0.6.2 (thanks @EdmondDantes)
 - `cookie` and `auth.driver` are scoped but not proxied via `offsetGet`: `AuthManager` passes `$app['cookie']` directly to `setCookieJar(QueueingFactory $cookie)`, so returning a proxy there causes a `TypeError`
@@ -34,3 +37,7 @@
 - `Connection::$transactions` counter is shared across coroutines (known limitation). In practice this only matters if two coroutines call `DB::beginTransaction()` simultaneously on the same connection name — PDO Pool ensures physical DB transactions are isolated, but Laravel may create a `SAVEPOINT` instead of `BEGIN` if the counter is non-zero.
 - `PDO::ATTR_POOL_ENABLED` caused a segfault when `PDOStatement::execute()` was called from inside class methods — reported to TrueAsync team, fixed (thanks @EdmondDantes)
 - PDO Pool must be initialized in the server coroutine scope (not lazily inside a request coroutine) — hence `warmUpDatabasePool()` runs before the accept loop
+- `proc_close()` double `waitpid` bug caused `Async\AsyncException: Failed to monitor process` with multi-worker FrankenPHP — reported to TrueAsync team, fixed (thanks @EdmondDantes)
+- TrueAsync dynamic fiber pool added (+10% on synthetic benchmarks)
+- TrueAsync PDO Pool connection spawning fix (+20% throughput)
+- Hot reload (`--watch`) for `async:serve` is not feasible: PHP cannot reload already-loaded class definitions within the same process, and restarting TrueAsync scheduler in-process causes `zend_mm_heap corrupted`. FrankenPHP hot reload pending watcher support in the Docker image.

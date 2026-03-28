@@ -29,7 +29,7 @@ Each HTTP request runs in its own coroutine with isolated state — no shared me
 ## Installation
 
 ```bash
-composer require yangusik/laravel-true-async
+composer require yangusik/laravel-spawn
 ```
 
 > ⚠️ **Not on Packagist yet.** Use one of the options below until the package is published.
@@ -40,11 +40,11 @@ composer require yangusik/laravel-true-async
 "repositories": [
     {
         "type": "vcs",
-        "url": "https://github.com/yangusik/laravel-true-async"
+        "url": "https://github.com/yangusik/laravel-spawn"
     }
 ],
 "require": {
-    "yangusik/laravel-true-async": "dev-master"
+    "yangusik/laravel-spawn": "dev-master"
 }
 ```
 
@@ -58,7 +58,7 @@ composer require yangusik/laravel-true-async
     }
 ],
 "require": {
-    "yangusik/laravel-true-async": "*"
+    "yangusik/laravel-spawn": "*"
 }
 ```
 
@@ -162,32 +162,26 @@ return [
 
 ---
 
-## Benchmark (FrankenPHP, 1 worker vs PHP-FPM 5 workers)
+## Benchmarks
 
-Load: 200 req/s pure JSON + 100 req/s with DB (`pg_sleep(10ms)`) via k6 `constant-arrival-rate`.
+### Laravel — TrueAsync vs Swoole Octane (4 workers, real DB workload)
 
-| Metric | Laravel Spawn (1 worker) | PHP-FPM (5 workers) |
-|---|---|---|
-| Target rate | 300 req/s | 300 req/s |
-| Actual throughput | **300 req/s** | 164 req/s |
-| Dropped iterations | **0** | 3,673 |
-| avg latency | **5.52ms** | 2,150ms |
-| p(95) latency | **14.68ms** | 2,690ms |
-| Failed requests | **0%** | 0% |
+Endpoint: 5 real SQL queries per request. PostgreSQL 16. WSL2. k6 at 1,000 req/s for 30s.
 
-At 4x lower load (75 req/s), FPM is stable but still **3x slower** on latency (p95: 45ms vs 14ms).
+| Metric | Swoole Octane | TrueAsync | Difference |
+|---|---|---|---|
+| Throughput | 206 req/s | **632 req/s** | **3.1x** |
+| Avg latency | 4,300ms | **850ms** | 5x faster |
+| Median latency | 4,820ms | **51ms** | **94x faster** |
+| p95 latency | 5,020ms | **288ms** | 17x faster |
 
----
+Swoole blocks one worker per DB query. TrueAsync yields the worker to the scheduler while waiting — a single worker handles hundreds of concurrent I/O operations.
 
-## TODO
+Full benchmark: [ta_benchmark](https://github.com/YanGusik/ta_benchmark)
 
-- [ ] Fix multi-worker mode (waiting for TrueAsync FrankenPHP bug fix)
-- [ ] RoadRunner adapter
-- [ ] Filesystem watcher / hot reload for dev server
-- [ ] More scoped services (cache, queue, mail)
-- [ ] Octane compatibility layer
-- [ ] Rename package to `laravel-spawn`
-- [ ] Publish to Packagist
+### Raw PHP — TrueAsync vs Swoole (no framework, no I/O)
+
+On pure CPU-bound workloads both servers cap at the same throughput (~10k req/s). With optimal Swoole config (ZTS, 16 reactor threads) Swoole is ~1.6x faster on P95 latency due to FrankenPHP's Go↔PHP boundary overhead (futex synchronization). On I/O-bound workloads this overhead is negligible.
 
 ---
 

@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Console;
+namespace Spawn\Laravel\Console;
 
 use Illuminate\Console\Command;
 use Symfony\Component\Process\Process;
@@ -11,7 +11,8 @@ class FrankenServeCommand extends Command
         {--host=0.0.0.0       : Host to listen on}
         {--port=8080           : Port to listen on}
         {--workers=1           : Number of PHP worker threads}
-        {--buffer=20           : Per-worker request buffer size (max queued requests)}';
+        {--buffer=20           : Per-worker request buffer size (max queued requests)}
+        {--watch               : Watch for file changes and automatically reload workers}';
 
     protected $description = 'Start the TrueAsync FrankenPHP server';
 
@@ -23,6 +24,7 @@ class FrankenServeCommand extends Command
         $port    = (int) $this->option('port');
         $workers = max(1, (int) $this->option('workers'));
         $buffer  = max(1, (int) $this->option('buffer'));
+        $watch   = (bool) $this->option('watch');
 
         $stateDir = storage_path('app/trueasync');
         if (!is_dir($stateDir)) {
@@ -33,9 +35,9 @@ class FrankenServeCommand extends Command
         $caddyfilePath = $stateDir . '/Caddyfile';
 
         $this->writeWorkerFile($workerPath);
-        $this->writeCaddyfile($caddyfilePath, $workerPath, $host, $port, $workers, $buffer);
+        $this->writeCaddyfile($caddyfilePath, $workerPath, $host, $port, $workers, $buffer, $watch);
 
-        $this->info("Starting TrueAsync FrankenPHP on {$host}:{$port} ({$workers} worker(s), buffer={$buffer})");
+        $this->info("Starting TrueAsync FrankenPHP on {$host}:{$port} ({$workers} worker(s), buffer={$buffer})" . ($watch ? ' (--watch)' : ''));
         $this->line("  Worker:    {$workerPath}");
         $this->line("  Caddyfile: {$caddyfilePath}");
         $this->newLine();
@@ -86,7 +88,7 @@ class FrankenServeCommand extends Command
         // Kernel::bootstrap() runs all bootstrappers (LoadConfiguration, LoadEnvironmentVariables, etc.)
         \$app->make(\\Illuminate\\Contracts\\Http\\Kernel::class)->bootstrap();
 
-        \$server = new \\TrueAsync\\Laravel\\Server\\FrankenPhpServer(\$app);
+        \$server = new \\Spawn\\Laravel\\Server\\FrankenPhpServer(\$app);
         \$server->prepareApp();
         \$server->start();
         PHP);
@@ -99,8 +101,10 @@ class FrankenServeCommand extends Command
         int $port,
         int $workers,
         int $buffer,
+        bool $watch = false,
     ): void {
-        $appPath = base_path();
+        $appPath       = base_path();
+        $watchDirective = $watch ? "\n                        watch" : '';
 
         // Use :port (no host) to avoid Caddy treating the host as a domain and enabling TLS.
         // The bind directive restricts which interface to listen on.
@@ -126,7 +130,7 @@ class FrankenServeCommand extends Command
                         num {$workers}
                         async
                         buffer_size {$buffer}
-                        match *
+                        match *{$watchDirective}
                     }
                 }
             }

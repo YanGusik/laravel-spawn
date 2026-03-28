@@ -1,10 +1,10 @@
 <?php
 
-namespace TrueAsync\Laravel;
+namespace Spawn\Laravel;
 
 use Illuminate\Support\ServiceProvider;
-use TrueAsync\Laravel\Console\FrankenServeCommand;
-use TrueAsync\Laravel\Console\ServeCommand;
+use Spawn\Laravel\Console\FrankenServeCommand;
+use Spawn\Laravel\Console\ServeCommand;
 
 class AsyncServiceProvider extends ServiceProvider
 {

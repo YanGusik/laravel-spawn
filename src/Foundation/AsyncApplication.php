@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Foundation;
+namespace Spawn\Laravel\Foundation;
 
 use Closure;
 use Illuminate\Foundation\Application;

@@ -1,5 +1,5 @@
 {
-  "name": "yangusik/laravel-true-async",
+  "name": "yangusik/laravel-spawn",
   "description": "Laravel adapter for PHP TrueAsync — async HTTP server with coroutine-per-request isolation",
   "type": "library",
   "license": "MIT",
@@ -14,18 +14,18 @@
   },
   "autoload": {
     "psr-4": {
-      "TrueAsync\\Laravel\\": "src/"
+      "Spawn\\Laravel\\": "src/"
     }
   },
   "autoload-dev": {
     "psr-4": {
-      "TrueAsync\\Laravel\\Tests\\": "tests/"
+      "Spawn\\Laravel\\Tests\\": "tests/"
     }
   },
   "extra": {
     "laravel": {
       "providers": [
-        "TrueAsync\\Laravel\\AsyncServiceProvider"
+        "Spawn\\Laravel\\AsyncServiceProvider"
       ]
     }
   },

@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Tests;
+namespace Spawn\Laravel\Tests;
 
 use function Async\delay;
 class DatabaseIsolationTest extends AsyncTestCase

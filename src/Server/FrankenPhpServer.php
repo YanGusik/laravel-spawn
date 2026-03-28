@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Server;
+namespace Spawn\Laravel\Server;
 
 use FrankenPHP\HttpServer as FrankenHttpServer;
 use FrankenPHP\Request as FrankenRequest;
@@ -9,8 +9,8 @@ use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
-use TrueAsync\Laravel\Contracts\ServerInterface;
-use TrueAsync\Laravel\Server\Concerns\ManagesDatabasePool;
+use Spawn\Laravel\Contracts\ServerInterface;
+use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 use function Async\coroutine_context;
 
@@ -24,7 +24,7 @@ class FrankenPhpServer implements ServerInterface
 
     public function prepareApp(): void
     {
-        if ($this->app instanceof \TrueAsync\Laravel\Foundation\AsyncApplication) {
+        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
             $this->app->enableAsyncMode();
         }
 

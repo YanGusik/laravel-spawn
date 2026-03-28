@@ -1,14 +1,14 @@
 <?php
 
-namespace TrueAsync\Laravel\Server;
+namespace Spawn\Laravel\Server;
 
 use Async\Future;
 use Async\FutureState;
 use Async\Scope;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
-use TrueAsync\Laravel\Contracts\ServerInterface;
-use TrueAsync\Laravel\Server\Concerns\ManagesDatabasePool;
+use Spawn\Laravel\Contracts\ServerInterface;
+use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 use function Async\coroutine_context;
 
@@ -31,7 +31,7 @@ class DevServer implements ServerInterface
 
     public function prepareApp(): void
     {
-        if ($this->app instanceof \TrueAsync\Laravel\Foundation\AsyncApplication) {
+        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
             $this->app->enableAsyncMode();
         }
 

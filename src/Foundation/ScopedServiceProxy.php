@@ -1,6 +1,6 @@
 <?php
 
-namespace TrueAsync\Laravel\Foundation;
+namespace Spawn\Laravel\Foundation;
 
 /**
  * Proxy returned to Laravel Facades for scoped services.

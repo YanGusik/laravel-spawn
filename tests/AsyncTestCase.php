@@ -1,10 +1,10 @@
 <?php
 
-namespace TrueAsync\Laravel\Tests;
+namespace Spawn\Laravel\Tests;
 
 use Async\Scope;
 use PHPUnit\Framework\TestCase;
-use TrueAsync\Laravel\Foundation\AsyncApplication;
+use Spawn\Laravel\Foundation\AsyncApplication;
 abstract class AsyncTestCase extends TestCase
 {
     protected function createApp(): AsyncApplication
