@@ -174,36 +174,29 @@ class AsyncResponseFactory extends ResponseFactory
             return parent::render($component, $props);
         }
 
-        $component = match (true) {
-            $component instanceof \BackedEnum => $component->value,
-            $component instanceof \UnitEnum => $component->name,
-            default => $component,
-        };
-
-        if (! is_string($component)) {
-            throw new \InvalidArgumentException('Component argument must be of type string or a string BackedEnum');
-        }
-
-        if (config('inertia.pages.ensure_pages_exist', false)) {
-            $this->findComponentOrFail($component);
-        }
-
-        if ($props instanceof Arrayable) {
-            $props = $props->toArray();
-        } elseif ($props instanceof ProvidesInertiaProperties) {
-            $props = [$props];
-        }
+        // Temporarily inject our per-coroutine state into the parent properties
+        // so that parent::render() picks them up correctly across Inertia versions.
+        $origShared = $this->sharedProps;
+        $origRootView = $this->rootView;
+        $origVersion = $this->version;
+        $origEncrypt = $this->encryptHistory;
+        $origUrl = $this->urlResolver;
 
         $state = $this->getState();
+        $this->sharedProps = $state['sharedProps'];
+        $this->rootView = $state['rootView'];
+        $this->version = $state['version'];
+        $this->encryptHistory = $state['encryptHistory'];
+        $this->urlResolver = $state['urlResolver'];
 
-        return new Response(
-            $component,
-            $state['sharedProps'],
-            $props,
-            $state['rootView'],
-            $this->getVersion(),
-            $state['encryptHistory'] ?? config('inertia.history.encrypt', false),
-            $state['urlResolver'],
-        );
+        try {
+            return parent::render($component, $props);
+        } finally {
+            $this->sharedProps = $origShared;
+            $this->rootView = $origRootView;
+            $this->version = $origVersion;
+            $this->encryptHistory = $origEncrypt;
+            $this->urlResolver = $origUrl;
+        }
     }
 }
