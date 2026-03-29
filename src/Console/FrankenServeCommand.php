@@ -108,7 +108,8 @@ class FrankenServeCommand extends Command
 
         // Use :port (no host) to avoid Caddy treating the host as a domain and enabling TLS.
         // The bind directive restricts which interface to listen on.
-        // No rewrite — getUri() must return the original request URI, not /index.php.
+        // Static files (CSS, JS, images) are served directly by Caddy from public/.
+        // All other requests go to the async PHP worker.
         file_put_contents($path, <<<CADDY
         {
             admin off
@@ -118,7 +119,12 @@ class FrankenServeCommand extends Command
 
         :{$port} {
             bind {$host}
-            root * {$appPath}
+            root * {$appPath}/public
+
+            @static file
+            handle @static {
+                file_server
+            }
 
             route {
                 php_server {
