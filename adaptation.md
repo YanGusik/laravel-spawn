@@ -114,14 +114,20 @@
 
 309 находок в `vendor/laravel/framework`. Классификация:
 
-### Требуют адаптации — per-request state в static resolvers
+### Безопасные через существующий скоупинг — resolvers используют `$app['request']`
 
-| Класс | Свойство | Проблема |
+| Класс | Свойство | Почему безопасно |
 |---|---|---|
-| **`AbstractPaginator`** | `$currentPageResolver` | Замыкание захватывает `$request` — корутина A видит page= корутины B |
-| **`AbstractPaginator`** | `$currentPathResolver` | Path от чужого запроса |
-| **`AbstractPaginator`** | `$queryStringResolver` | Query string от чужого запроса |
-| **`AbstractCursorPaginator`** | `$currentCursorResolver` | Cursor от чужого запроса |
+| `AbstractPaginator` | `$currentPageResolver` | Замыкание вызывает `$app['request']->input()` — request уже scoped |
+| `AbstractPaginator` | `$currentPathResolver` | `$app['request']->url()` — scoped |
+| `AbstractPaginator` | `$queryStringResolver` | `$app['request']->query()` — scoped |
+| `AbstractCursorPaginator` | `$currentCursorResolver` | `$app['request']->input()` — scoped |
+| `AbstractPaginator` | `$viewFactoryResolver` | `$app['view']` — one view factory, safe |
+
+### Требуют внимания — потенциально опасны
+
+| Класс | Свойство | Сценарий |
+|---|---|---|
 | **`ManagesLayouts`** | `$parentPlaceholder` | Параллельный рендеринг Blade `@section`/`@yield` — маловероятно, но возможно |
 
 ### Требуют внимания — опасны в специфичных сценариях
