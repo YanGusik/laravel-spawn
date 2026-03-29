@@ -114,14 +114,19 @@
 
 309 находок в `vendor/laravel/framework`. Полная классификация:
 
-### Доказанные баги — подтверждены тестами (`tests/StaticStateBugsTest.php`)
+### Unsafe-паттерны — документировать для пользователей
 
-| Класс | Свойство | Проблема | Адаптация |
-|---|---|---|---|
-| **`Number`** | `$locale`, `$currency` | `Number::useLocale('de')` → корутина B ставит `'fr'` → A рендерит цены во `'fr'`. `withLocale()` тоже опасен: callback может содержать I/O (yield point) | **Нужна** — если приложение мультиязычное |
-| **`Once`** | `$instance` (WeakMap) | `once()` на singleton-сервисе кэширует результат → B получает значение A | **Нужна** — если `once()` используется с per-request данными |
+Не требуют фикса в spawn, но пользователи должны знать:
 
-### Не баги — cooperative multitasking делает их безопасными
+| Паттерн | Проблема | Безопасная альтернатива |
+|---|---|---|
+| `Number::useLocale('de')` per-request | Меняет глобальный static — утечка между корутинами | Передавать locale параметром: `Number::format($n, locale: 'de')` |
+| `Number::withLocale('de', fn() => ...)` | Безопасен если callback без I/O; опасен если callback содержит yield point (DB, HTTP) | Передавать locale параметром |
+| `once()` на singleton-сервисе | WeakMap кэширует по объекту — singleton = один кэш на все корутины | Не использовать `once()` с per-request данными на синглтонах (антипаттерн и в Octane) |
+
+Тесты воспроизведения: `tests/StaticStateBugsTest.php`
+
+### Безопасные — cooperative multitasking делает их безопасными
 
 | Класс | Свойство | Почему безопасно |
 |---|---|---|
