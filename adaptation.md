@@ -112,40 +112,76 @@
 
 ## Результаты автоматического сканирования (PHPStan MutableStaticPropertyRule)
 
-309 находок в `vendor/laravel/framework`. Классификация:
+309 находок в `vendor/laravel/framework`. Полная классификация:
 
-### Безопасные через существующий скоупинг — resolvers используют `$app['request']`
+### Реальные баги — mutable static, пишется в runtime per-request
 
-| Класс | Свойство | Почему безопасно |
+| Класс | Свойство | Проблема | Нужна адаптация? |
+|---|---|---|---|
+| **`Relation`** | `$constraints` | `noConstraints()` ставит `false` → `finally` возвращает. Гонка: корутина A ставит false, корутина B читает false | **Да** — гонка при eager loading |
+| **`Relation`** | `$selfJoinCount` | Инкрементируется при self-join. Shared counter → дубликат алиасов маловероятен, но counter не сбрасывается | Нет — counter монотонный, алиасы уникальны |
+| **`Number`** | `$locale`, `$currency` | `Number::useLocale()` / `withLocale()` меняют глобально. Мультиязычный сайт: запрос A ставит `ru`, B ставит `en`, A рендерит цены в `en` | **Да** — если используется `Number::useLocale()` |
+| **`Once`** | `$instance` (WeakMap) | `once()` кэширует результат в shared WeakMap. Корутина A кэширует значение, B получает его вместо своего | **Да** — если `once()` используется с per-request данными |
+| **`BladeCompiler`** | `$componentHashStack` | Stack `push`/`pop` при рендере `<x-component>`. Параллельный рендер → чужой hash в стеке | **Да** — при параллельном Blade рендере |
+| **`ManagesLayouts`** | `$parentPlaceholder` | Кэш placeholder-ов для `@section`/`@yield`. Детерминированный (hash от имени секции) — **безопасен** | Нет — одинаковый результат для всех |
+| **`View\Component`** | `$factory` | `Container::getInstance()->make('view')` — кэшируется в static. Одна фабрика для всех | Нет — `AsyncViewFactory` уже корутинно-безопасна |
+
+### Безопасные — resolvers через `$app['request']` (уже scoped)
+
+| Класс | Свойство | Почему |
 |---|---|---|
-| `AbstractPaginator` | `$currentPageResolver` | Замыкание вызывает `$app['request']->input()` — request уже scoped |
+| `AbstractPaginator` | `$currentPageResolver` | `$app['request']->input()` — request scoped |
 | `AbstractPaginator` | `$currentPathResolver` | `$app['request']->url()` — scoped |
 | `AbstractPaginator` | `$queryStringResolver` | `$app['request']->query()` — scoped |
 | `AbstractCursorPaginator` | `$currentCursorResolver` | `$app['request']->input()` — scoped |
-| `AbstractPaginator` | `$viewFactoryResolver` | `$app['view']` — one view factory, safe |
+| `AbstractPaginator` | `$viewFactoryResolver` | `$app['view']` — один объект, thread-safe |
+| `Uri` | `$urlGeneratorResolver` | Boot-time |
 
-### Требуют внимания — потенциально опасны
+### Безопасные — boot-time конфиг (write-once, read-only в runtime)
 
-| Класс | Свойство | Сценарий |
-|---|---|---|
-| **`ManagesLayouts`** | `$parentPlaceholder` | Параллельный рендеринг Blade `@section`/`@yield` — маловероятно, но возможно |
+**76× `$macros`** (Macroable trait) — регистрируются при загрузке, read-only в runtime.
 
-### Требуют внимания — опасны в специфичных сценариях
+**Model static properties (class-level metadata, не per-request):**
+`$resolver`, `$dispatcher`, `$booted`, `$booting`, `$bootedCallbacks`, `$traitInitializers`,
+`$globalScopes`, `$mutatorCache`, `$attributeMutatorCache`, `$getAttributeMutatorCache`,
+`$setAttributeMutatorCache`, `$castTypeCache`, `$classAttributes`, `$snakeAttributes`,
+`$primitiveCastTypes`, `$collectionClass`, `$manyMethods`, `$relationResolvers`,
+`$resolvedCollectionClasses`, `$modelsShouldPreventLazyLoading`,
+`$modelsShouldAutomaticallyEagerLoadRelationships`, `$modelsShouldPreventSilentlyDiscardingAttributes`,
+`$modelsShouldPreventAccessingMissingAttributes`, `$lazyLoadingViolationCallback`,
+`$discardedAttributeViolationCallback`, `$missingAttributeViolationCallback`,
+`$isBroadcasting`, `$builder`, `$isSoftDeletable`, `$isPrunable`, `$isMassPrunable`,
+`$ignoreOnTouch`, `$ignoreTimestampsOn`, `$encrypter`, `$guardableColumns`.
 
-| Класс | Свойство | Сценарий |
-|---|---|---|
-| `Model` | `$unguarded` | `Model::unguard()` в seeders — глобальный флаг. Опасен если seeder параллельно с запросами |
-| `Model` | `$recursionCache` | Static WeakMap, потенциальный cross-coroutine leak |
+**`Model::$unguarded`** — `Model::unguard()` используется только в seeders (CLI), не в HTTP-запросах. Безопасен.
 
-### Безопасные — boot-time конфиг (read-only в runtime)
+**`Model::$recursionCache`** — WeakMap, ключ = модель-объект. Модели per-request → GC удаляет entry. Безопасен.
 
-76× `$macros` (Macroable trait), `Model::$resolver`, `$dispatcher`, `$booted`, `$bootedCallbacks`,
-`$traitInitializers`, `$globalScopes`, `$mutatorCache`, `$attributeMutatorCache`, `$castTypeCache`,
-`$classAttributes`, `$snakeAttributes`, `$primitiveCastTypes`, `$collectionClass`,
-`$modelsShouldPreventLazyLoading` и подобные стратегии, `Facade::$app`/`$resolvedInstance`/`$cached` (решено через `ScopedServiceProxy`),
-`Router::$verbs`, `Route::$validators`, `Encrypter::$supportedCiphers`, `Connection::$resolvers`,
-`Cookie/Middleware::$neverEncrypt`/`$serialize`, `Queue::$createPayloadCallbacks`,
-`$redirectToCallback` (Auth middleware — ставится в `bootstrap/app.php`).
+**Facade:** `$app`, `$resolvedInstance`, `$cached` — решено через `ScopedServiceProxy`.
+
+**Routing:** `Router::$verbs`, `Route::$validators`, `ResourceRegistrar::$parameterMap`/`$singularParameters`/`$verbs` — константы.
+
+**Database:** `Connection::$resolvers`, `Schema\Builder::$defaultStringLength`/`$defaultMorphKeyType`/`$defaultTimePrecision`,
+`PostgresGrammar::$customOperators`/`$cascadeTruncate`, `Relation::$morphMap`/`$requireMorphMap`,
+`Json::$encoder`/`$decoder`, `ModelIdentifier::$useMorphMap` — boot-time.
+
+**Auth/Middleware:** `$redirectToCallback` (4×), `$neverEncrypt`, `$serialize`, `$neverVerify`,
+`$neverValidate`, `$neverPrevent`, `$neverTrim`, `$skipCallbacks` (3×), `$alwaysTrust*` — boot config.
+
+**Support:** `Container::$instance`, `AliasLoader::$instance`/`$facadeNamespace`, `Env::*`,
+`DateFactory::*`, `Str::$snakeCache`/`$camelCache`/`$studlyCache` (детерминированные кэши),
+`Str::$uuidFactory`/`$ulidFactory`, `Pluralizer::*`, `ServiceProvider::$publishes`/*,
+`Sleep::*` (тестовый API), `Lottery::$resultFactory`, `BinaryCodec::$customCodecs`,
+`ConfigurationUrlParser::$driverAliases`, `EncodedHtmlString::$encodeUsingFactory`.
+
+**View:** `Component::$bladeViewCache`/`$propertyCache`/`$methodCache`/`$constructorParametersCache`/`$ignoredParameterNames` (class-level кэши),
+`DynamicComponent::$compiler`/`$componentClasses`, `ManagesLayouts::$parentPlaceholderSalt`.
+
+**Другое:** `Encrypter::$supportedCiphers`, `Mail/Mailable::$viewDataCallback`, `Markdown::$withSecuredEncoding`/`$extensions`,
+`Queue::$createPayloadCallbacks`, `Worker::*` (отдельный процесс), `Migrator::*`, `Seeder::$called` (CLI),
+`HandleExceptions::*`, `Bootstrap::*`, `Vite::$manifests`, `Http\Client\*`, `JsonResource::$wrap`/*,
+`Validation\Rules\*::$defaultCallback`, `Validator::$placeholderHash`, `Log\Context\*`,
+`PendingBatch::$batchableClasses`, `Foundation\Events\*`.
 
 ---
 
