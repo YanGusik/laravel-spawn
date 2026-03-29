@@ -10,9 +10,10 @@ use Illuminate\Contracts\Http\Kernel;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Spawn\Laravel\Contracts\ServerInterface;
+use Spawn\Laravel\Foundation\ContextKeys;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
-use function Async\coroutine_context;
+use function Async\current_context;
 
 class FrankenPhpServer implements ServerInterface
 {
@@ -53,7 +54,7 @@ class FrankenPhpServer implements ServerInterface
             try {
                 $request = $this->buildRequest($frankenRequest);
 
-                coroutine_context()->set('laravel.request', $request);
+                current_context()->set(ContextKeys::$request, $request);
 
                 $kernel = $this->app->make(Kernel::class);
                 $laravelResponse = $kernel->handle($request);

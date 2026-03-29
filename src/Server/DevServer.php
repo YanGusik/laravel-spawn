@@ -8,9 +8,10 @@ use Async\Scope;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
 use Spawn\Laravel\Contracts\ServerInterface;
+use Spawn\Laravel\Foundation\ContextKeys;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
-use function Async\coroutine_context;
+use function Async\current_context;
 
 class DevServer implements ServerInterface
 {
@@ -72,7 +73,16 @@ class DevServer implements ServerInterface
                     continue;
                 }
 
-                $serverScope->spawn($this->handleConnection(...), $client);
+                // Each request gets its own Scope so that current_context()
+                // is isolated per-request and child coroutines can access
+                // request-scoped services via hierarchical find().
+                $requestScope = Scope::inherit($serverScope);
+
+                $requestScope->setExceptionHandler(function (\Throwable $e) {
+                    echo "[request error] " . $e::class . ": " . $e->getMessage() . "\n";
+                });
+
+                $requestScope->spawn($this->handleConnection(...), $client, $requestScope);
             }
         });
 
@@ -84,7 +94,7 @@ class DevServer implements ServerInterface
         }
     }
 
-    private function handleConnection(mixed $client): void
+    private function handleConnection(mixed $client, Scope $requestScope): void
     {
         try {
             $raw = $this->readRaw($client);
@@ -95,7 +105,7 @@ class DevServer implements ServerInterface
 
             $request = RequestParser::parse($raw);
 
-            coroutine_context()->set('laravel.request', $request);
+            current_context()->set(ContextKeys::$request, $request);
 
             $kernel = $this->app->make(Kernel::class);
             $response = $kernel->handle($request);
@@ -104,6 +114,7 @@ class DevServer implements ServerInterface
 
             $kernel->terminate($request, $response);
         } finally {
+            $requestScope->dispose();
             fclose($client);
         }
     }

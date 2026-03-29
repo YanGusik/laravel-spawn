@@ -9,7 +9,7 @@ namespace Spawn\Laravel\Foundation;
  * environment this cache becomes shared across coroutines, causing state
  * leaks. Instead of clearing the cache on every request (which races with
  * other coroutines), we cache this proxy once. Every facade call goes through
- * __call → resolver → coroutine_context() → the correct per-coroutine instance.
+ * __call → resolver → current_context() → the correct per-request instance.
  *
  * DI injection (make / resolve) bypasses offsetGet and gets the real instance
  * directly, so type-hints work correctly.

@@ -5,7 +5,7 @@ namespace Spawn\Laravel\Foundation;
 use Closure;
 use Illuminate\Foundation\Application;
 
-use function Async\coroutine_context;
+use function Async\current_context;
 
 class AsyncApplication extends Application
 {
@@ -55,6 +55,7 @@ class AsyncApplication extends Application
     public function enableAsyncMode(): void
     {
         $this->asyncMode = true;
+        ContextKeys::init();
     }
 
     public function scopedSingleton(string $abstract, Closure $factory): void
@@ -83,9 +84,9 @@ class AsyncApplication extends Application
 
         $alias = $this->getAlias($abstract);
 
-        // Request is always resolved from coroutine context
+        // Request is always resolved from scope context
         if ($alias === 'request') {
-            $request = coroutine_context()->find('laravel.request');
+            $request = current_context()->find(ContextKeys::$request);
 
             if ($request !== null) {
                 return $request;
@@ -119,13 +120,16 @@ class AsyncApplication extends Application
 
     private function resolveScoped(string $alias): mixed
     {
-        $ctx = coroutine_context();
-        $key = 'laravel.scoped.' . $alias;
+        $ctx = current_context();
+        $bag = $ctx->find(ContextKeys::$scopedServices);
 
-        $instance = $ctx->find($key);
+        if ($bag === null) {
+            $bag = new \stdClass();
+            $ctx->set(ContextKeys::$scopedServices, $bag);
+        }
 
-        if ($instance !== null) {
-            return $instance;
+        if (isset($bag->$alias)) {
+            return $bag->$alias;
         }
 
         if (isset($this->scopedBindings[$alias])) {
@@ -140,7 +144,7 @@ class AsyncApplication extends Application
             }
         }
 
-        $ctx->set($key, $instance);
+        $bag->$alias = $instance;
 
         return $instance;
     }
