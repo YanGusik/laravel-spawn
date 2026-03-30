@@ -29,6 +29,8 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerPermissionAdapter();
         $this->registerInertiaAdapter();
         $this->registerTranslatorAdapter();
+        $this->registerSocialiteAdapter();
+        $this->registerEventDispatcherAdapter();
     }
 
     private function registerPermissionAdapter(): void
@@ -62,6 +64,30 @@ class AsyncServiceProvider extends ServiceProvider
         $original = $this->app['config'];
         $async = new \Spawn\Laravel\Config\AsyncConfig($original->all());
         $this->app->instance('config', $async);
+    }
+
+    private function registerSocialiteAdapter(): void
+    {
+        if (! class_exists(\Laravel\Socialite\SocialiteManager::class)) {
+            return;
+        }
+
+        // SocialiteManager caches drivers with stale request state.
+        // Scoped singleton gives each coroutine a fresh manager.
+        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            $this->app->scopedSingleton(
+                \Laravel\Socialite\Contracts\Factory::class,
+                fn ($app) => new \Laravel\Socialite\SocialiteManager($app),
+            );
+        }
+    }
+
+    private function registerEventDispatcherAdapter(): void
+    {
+        $this->app->singleton('events', function ($app) {
+            $dispatcher = new \Spawn\Laravel\Events\AsyncDispatcher($app);
+            return $dispatcher;
+        });
     }
 
     private function registerTranslatorAdapter(): void

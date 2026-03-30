@@ -56,6 +56,10 @@ class FrankenPhpServer implements ServerInterface
         if (($config = $this->app->make('config')) instanceof \Spawn\Laravel\Config\AsyncConfig) {
             $config->bootCompleted();
         }
+
+        if (($events = $this->app->make('events')) instanceof \Spawn\Laravel\Events\AsyncDispatcher) {
+            $events->bootCompleted();
+        }
     }
 
     public function start(): void

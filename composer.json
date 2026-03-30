@@ -11,6 +11,7 @@
   },
   "require-dev": {
     "inertiajs/inertia-laravel": "^3.0",
+    "laravel/socialite": "^5.26",
     "phpstan/phpstan": "^2.1",
     "phpunit/phpunit": "^11.0",
     "spatie/laravel-permission": "^7.2"

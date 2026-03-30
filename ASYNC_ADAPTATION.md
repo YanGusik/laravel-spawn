@@ -27,6 +27,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **Database** | [`CoroutineTransactions`](src/Database/CoroutineTransactions.php) | Transaction depth counter |
 | **Translation** | [`AsyncTranslator`](src/Translation/AsyncTranslator.php) | Active locale (shared `$loaded` cache) |
 | **Config** | [`AsyncConfig`](src/Config/AsyncConfig.php) | `config()->set()` overlay per coroutine |
+| **Events** | [`AsyncDispatcher`](src/Events/AsyncDispatcher.php) | `defer()` state (deferring flag, deferred queue) |
 | **Facades** | [`ScopedServiceProxy`](src/Foundation/ScopedServiceProxy.php) | `Facade::$resolvedInstance` cache |
 
 ### Third-Party Packages
@@ -35,6 +36,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 |---|---|---|
 | **spatie/laravel-permission** | [`AsyncPermissionRegistrar`](src/Permission/AsyncPermissionRegistrar.php) | Team ID, wildcard permission index |
 | **inertiajs/inertia-laravel** | [`AsyncResponseFactory`](src/Inertia/AsyncResponseFactory.php) | sharedProps, rootView, version, encryptHistory, urlResolver |
+| **laravel/socialite** | `scopedSingleton` (in `AsyncServiceProvider`) | Fresh manager per coroutine (drivers cache stale request) |
 
 ---
 
