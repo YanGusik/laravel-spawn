@@ -10,6 +10,7 @@
     "ext-pdo": "*"
   },
   "require-dev": {
+    "barryvdh/laravel-debugbar": "^4.2",
     "inertiajs/inertia-laravel": "^3.0",
     "laravel/socialite": "^5.26",
     "laravel/telescope": "^5.19",

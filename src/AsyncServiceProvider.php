@@ -31,6 +31,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerTranslatorAdapter();
         $this->registerSocialiteAdapter();
         $this->registerEventDispatcherAdapter();
+        $this->registerDebugbarAdapter();
     }
 
     private function registerPermissionAdapter(): void
@@ -88,6 +89,22 @@ class AsyncServiceProvider extends ServiceProvider
             $dispatcher = new \Spawn\Laravel\Events\AsyncDispatcher($app);
             return $dispatcher;
         });
+    }
+
+    private function registerDebugbarAdapter(): void
+    {
+        if (! class_exists(\Barryvdh\Debugbar\LaravelDebugbar::class)) {
+            return;
+        }
+
+        // Debugbar collectors accumulate per-request data (queries, events, etc.).
+        // scopedSingleton gives each coroutine its own debugbar instance.
+        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            $this->app->scopedSingleton(
+                \Barryvdh\Debugbar\LaravelDebugbar::class,
+                fn ($app) => new \Barryvdh\Debugbar\LaravelDebugbar($app),
+            );
+        }
     }
 
     private function registerTranslatorAdapter(): void
