@@ -199,10 +199,22 @@ class FrankenPhpServer implements ServerInterface
     {
         $frankenResponse->setStatus($response->getStatusCode());
 
-        foreach ($response->headers->all() as $name => $values) {
+        // Regular headers — setHeader replaces (correct for single-value headers).
+        foreach ($response->headers->allPreserveCaseWithoutCookies() as $name => $values) {
+            $first = true;
             foreach ($values as $value) {
-                $frankenResponse->setHeader($name, $value);
+                if ($first) {
+                    $frankenResponse->setHeader($name, $value);
+                    $first = false;
+                } else {
+                    $frankenResponse->addHeader($name, $value);
+                }
             }
+        }
+
+        // Cookies — addHeader to allow multiple Set-Cookie headers.
+        foreach ($response->headers->getCookies() as $cookie) {
+            $frankenResponse->addHeader('Set-Cookie', (string) $cookie);
         }
 
         $frankenResponse->write((string) $response->getContent());
