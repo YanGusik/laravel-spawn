@@ -21,8 +21,7 @@ use Throwable;
 
 class Telescope
 {
-    use AuthorizesRequests,
-        ExtractsMailableTags,
+    use ExtractsMailableTags,
         ListensForStorageOpportunities,
         RegistersWatchers,
         \Spawn\Laravel\Telescope\CoroutineSafeRecording;

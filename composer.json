@@ -21,13 +21,7 @@
   "autoload": {
     "psr-4": {
       "Spawn\\Laravel\\": "src/"
-    },
-    "classmap": [
-      "src/Telescope/Telescope.php"
-    ],
-    "exclude-from-classmap": [
-      "vendor/laravel/telescope/src/Telescope.php"
-    ]
+    }
   },
   "autoload-dev": {
     "psr-4": {

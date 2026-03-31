@@ -11,6 +11,7 @@ use Spawn\Laravel\AsyncServiceProvider;
 use Spawn\Laravel\Config\AsyncConfig;
 use Spawn\Laravel\Events\AsyncDispatcher;
 use Spawn\Laravel\Foundation\AsyncApplication;
+use Spawn\Laravel\Session\AsyncDatabaseSessionHandler;
 use Spawn\Laravel\Translation\AsyncTranslator;
 
 /**
@@ -254,5 +255,124 @@ class ServiceBootOrderTest extends TestCase
             'app("translator") must be AsyncTranslator even if resolved early. ' .
             'If this fails — registerTranslatorAdapter() runs too late in boot().'
         );
+    }
+
+    // ── worker bootstrap safety ───────────────────────────────────────────────
+
+    /**
+     * Simulates what FrankenPHP does before the first request arrives:
+     * app is booted, async mode is enabled, but no request has been set yet.
+     *
+     * HandleExceptions (and other bootstrappers) can access $app['request']
+     * before kernel->handle() is called. This must NOT crash.
+     *
+     * Regression: fireResolvingCallbacks() in tryResolveScoped() was firing
+     * globalAfterResolvingCallbacks that accessed 'request' → ReflectionException.
+     */
+    /**
+     * Simulates what FrankenPHP does before the first request arrives:
+     * app is booted, async mode is enabled, but no request has been set yet.
+     *
+     * HandleExceptions::renderHttpResponse() does $app['request'] when rendering
+     * any error. In FrankenPHP the PHP SAPI is not 'cli', so runningInConsole()=false
+     * and it always takes the HTTP branch. If this crashes, the error handler itself
+     * crashes, creating a fatal loop that kills the worker on startup.
+     *
+     * Regression for: ReflectionException: Class "request" does not exist
+     */
+    public function test_resolve_request_before_first_http_request_does_not_crash(): void
+    {
+        $app = $this->makeApp();
+        $this->bootWith($app, [AsyncServiceProvider::class]);
+
+        // $app['request'] — path used by HandleExceptions (offsetGet)
+        $r1 = $app['request'];
+        $this->assertInstanceOf(
+            \Illuminate\Http\Request::class,
+            $r1,
+            '$app["request"] must return a Request object even before the first HTTP request. ' .
+            'If this fails — HandleExceptions will crash with ReflectionException on worker boot.'
+        );
+
+        // $app->make('request') — path used by any make() call in the DI chain
+        $r2 = $app->make('request');
+        $this->assertInstanceOf(
+            \Illuminate\Http\Request::class,
+            $r2,
+            'make("request") must return a Request object even before the first HTTP request.'
+        );
+    }
+
+    // ── session ───────────────────────────────────────────────────────────────
+
+    public function test_database_session_handler_is_async(): void
+    {
+        $app = $this->makeApp();
+        $this->setSessionConfig($app);
+        $this->stubDatabaseConnection($app);
+
+        $this->bootWith($app, [
+            \Illuminate\Session\SessionServiceProvider::class,
+            AsyncServiceProvider::class,
+        ]);
+
+        $handler = $app->make('session')->driver('database')->getHandler();
+
+        $this->assertInstanceOf(
+            AsyncDatabaseSessionHandler::class,
+            $handler,
+            'Database session driver must use AsyncDatabaseSessionHandler. ' .
+            'If this fails — afterResolving("session") callback was not registered.'
+        );
+    }
+
+    public function test_database_session_handler_is_async_when_session_resolved_early(): void
+    {
+        $app = $this->makeApp();
+        $this->setSessionConfig($app);
+        $this->stubDatabaseConnection($app);
+
+        $earlyProvider = new class($app) extends ServiceProvider {
+            public function register(): void
+            {
+                $this->app->make('session');
+            }
+            public function boot(): void {}
+        };
+
+        $this->bootWith($app, [
+            \Illuminate\Session\SessionServiceProvider::class,
+            $earlyProvider,
+            AsyncServiceProvider::class,
+        ]);
+
+        $handler = $app->make('session')->driver('database')->getHandler();
+
+        $this->assertInstanceOf(
+            AsyncDatabaseSessionHandler::class,
+            $handler,
+            'Database session driver must use AsyncDatabaseSessionHandler even when ' .
+            'the session manager is resolved before AsyncServiceProvider registers. ' .
+            'If this fails — fireResolvingCallbacks() is missing from tryResolveScoped().'
+        );
+    }
+
+    private function setSessionConfig(AsyncApplication $app): void
+    {
+        $app['config']->set('session.driver', 'database');
+        $app['config']->set('session.table', 'sessions');
+        $app['config']->set('session.lifetime', 120);
+        $app['config']->set('session.connection', null);
+        $app['config']->set('session.encrypt', false);
+        $app['config']->set('session.serialization', 'php');
+        $app['config']->set('session.cookie', 'laravel_session');
+    }
+
+    private function stubDatabaseConnection(AsyncApplication $app): void
+    {
+        $connection = $this->createMock(\Illuminate\Database\ConnectionInterface::class);
+        $db = $this->createMock(\Illuminate\Database\DatabaseManager::class);
+        $db->method('connection')->willReturn($connection);
+        $app->instance('db', $db);
     }
 }

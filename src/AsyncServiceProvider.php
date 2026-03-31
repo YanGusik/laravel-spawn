@@ -13,10 +13,12 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerConfigAdapter();
         $this->registerEventDispatcherAdapter();
         $this->registerTranslatorAdapter();
+        $this->registerSessionAdapter();
         $this->registerPermissionAdapter();
         $this->registerInertiaAdapter();
         $this->registerSocialiteAdapter();
         $this->registerDebugbarAdapter();
+        $this->registerTelescopeAdapter();
 
         $this->mergeConfigFrom(__DIR__ . '/../config/async.php', 'async');
 
@@ -114,6 +116,43 @@ class AsyncServiceProvider extends ServiceProvider
                 fn ($app) => new \Fruitcake\LaravelDebugbar\LaravelDebugbar($app, $app['request']),
             );
         }
+    }
+
+    private function registerSessionAdapter(): void
+    {
+        // Replace the database session handler with an async-safe version that uses
+        // upsert instead of INSERT + catch + UPDATE.
+        //
+        // In async environments the response is sent before terminate() runs.
+        // If the client immediately retries with the same cookie, two coroutines can
+        // race to INSERT the same session ID → duplicate key warnings in stock handler.
+        // Upsert is atomic, so no race is possible regardless of concurrency.
+        $this->app->afterResolving('session', function ($manager) {
+            $manager->extend('database', function ($app) {
+                $table    = $app['config']['session.table'];
+                $lifetime = $app['config']['session.lifetime'];
+                $conn     = $app['db']->connection($app['config']['session.connection'] ?? null);
+
+                return new \Spawn\Laravel\Session\AsyncDatabaseSessionHandler($conn, $table, $lifetime, $app);
+            });
+        });
+    }
+
+    private function registerTelescopeAdapter(): void
+    {
+        if (! \Composer\InstalledVersions::isInstalled('laravel/telescope')) {
+            return;
+        }
+
+        if (class_exists(\Laravel\Telescope\Telescope::class, autoload: false)) {
+            return;
+        }
+
+        spl_autoload_register(function (string $class): void {
+            if ($class === 'Laravel\\Telescope\\Telescope') {
+                require __DIR__ . '/../overrides/Telescope.php';
+            }
+        }, prepend: true);
     }
 
     private function registerTranslatorAdapter(): void
