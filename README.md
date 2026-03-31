@@ -30,8 +30,6 @@ Each HTTP request runs in its own coroutine with isolated state — no shared me
 composer require yangusik/laravel-spawn
 ```
 
-> ⚠️ **Not on Packagist yet.** Use one of the options below until the package is published.
-
 **Via git repository:**
 
 ```json
