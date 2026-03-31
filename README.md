@@ -89,8 +89,6 @@ Requires the `trueasync/php-true-async:latest-frankenphp` Docker image.
 php artisan async:franken --host=0.0.0.0 --port=8080 --workers=1 --buffer=1
 ```
 
-> ⚠️ Multi-worker mode (`--workers > 1` or `--buffer > 1`) is temporarily unstable due to a bug in the TrueAsync FrankenPHP integration. Use `--workers=1 --buffer=1` until fixed.
-
 ---
 
 ## Docker quick start
