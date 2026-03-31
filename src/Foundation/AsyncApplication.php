@@ -113,6 +113,11 @@ class AsyncApplication extends Application
             }
         }
 
+        // Fire resolving/afterResolving callbacks so that adapters registered via
+        // afterResolving() (e.g. registerSessionAdapter) work for scoped services too.
+        // Without this, parent::resolve() is bypassed and callbacks never fire.
+        $this->fireResolvingCallbacks($alias, $instance);
+
         $ctx->set($ctxKey, $instance);
 
         return $instance;

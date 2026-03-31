@@ -179,6 +179,27 @@ On pure CPU-bound workloads both servers cap at the same throughput (~10k req/s)
 
 ---
 
+## Sessions
+
+### Database sessions (built-in fix)
+
+The package automatically replaces Laravel's `DatabaseSessionHandler` with an async-safe version that uses `upsert` instead of `INSERT + catch + UPDATE`.
+
+In a standard async server the HTTP response is sent *before* `kernel->terminate()` writes the session. If the client immediately sends the next request with the same cookie, two coroutines can race to INSERT the same session ID — causing duplicate-key warnings in the stock handler. The upsert is atomic, so this race is impossible regardless of concurrency.
+
+No configuration needed. Works transparently when `SESSION_DRIVER=database`.
+
+### Redis sessions (recommended for production)
+
+For high-concurrency workloads Redis sessions have lower overhead than database sessions and avoid any persistence race entirely:
+
+```env
+SESSION_DRIVER=redis
+REDIS_HOST=127.0.0.1
+```
+
+---
+
 ## License
 
 MIT
