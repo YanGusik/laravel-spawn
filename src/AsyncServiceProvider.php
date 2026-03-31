@@ -11,6 +11,12 @@ class AsyncServiceProvider extends ServiceProvider
     public function register(): void
     {
         $this->registerConfigAdapter();
+        $this->registerEventDispatcherAdapter();
+        $this->registerTranslatorAdapter();
+        $this->registerPermissionAdapter();
+        $this->registerInertiaAdapter();
+        $this->registerSocialiteAdapter();
+        $this->registerDebugbarAdapter();
 
         $this->mergeConfigFrom(__DIR__ . '/../config/async.php', 'async');
 
@@ -25,13 +31,6 @@ class AsyncServiceProvider extends ServiceProvider
         $this->publishes([
             __DIR__ . '/../config/async.php' => config_path('async.php'),
         ], 'async-config');
-
-        $this->registerPermissionAdapter();
-        $this->registerInertiaAdapter();
-        $this->registerTranslatorAdapter();
-        $this->registerSocialiteAdapter();
-        $this->registerEventDispatcherAdapter();
-        $this->registerDebugbarAdapter();
     }
 
     private function registerPermissionAdapter(): void
@@ -86,8 +85,18 @@ class AsyncServiceProvider extends ServiceProvider
     private function registerEventDispatcherAdapter(): void
     {
         $this->app->singleton('events', function ($app) {
-            $dispatcher = new \Spawn\Laravel\Events\AsyncDispatcher($app);
-            return $dispatcher;
+            return new \Spawn\Laravel\Events\AsyncDispatcher($app);
+        });
+
+        // DatabaseServiceProvider::boot() calls Model::setEventDispatcher($app['events'])
+        // which runs before our register() binds AsyncDispatcher — but since we're now
+        // in register(), the binding is set first. However, if 'events' was already
+        // resolved and cached by something else, Model may still get the old instance.
+        // We fix this by updating Model after all providers have booted.
+        $this->app->booted(function ($app) {
+            if (class_exists(\Illuminate\Database\Eloquent\Model::class)) {
+                \Illuminate\Database\Eloquent\Model::setEventDispatcher($app->make('events'));
+            }
         });
     }
 
