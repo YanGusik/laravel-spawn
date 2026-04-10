@@ -13,8 +13,8 @@ namespace Spawn\Laravel\Foundation;
  * DatabaseManager tied to a specific scope context gets GC'd after the scope
  * finishes, leaving Model::$resolver pointing to a destroyed object → segfault.
  * Physical connection isolation is handled by PDO Pool at the C level instead.
- * Known limitation: Connection::$transactions counter is shared across coroutines.
- * Workaround: use db.transaction() which goes through DatabaseTransactionsManager.
+ * Per-coroutine transaction counter isolation is handled by CoroutineTransactions trait
+ * in Async*Connection subclasses registered via Connection::resolverFor().
  */
 enum ScopedService: string
 {
@@ -23,5 +23,4 @@ enum ScopedService: string
     case AUTH        = 'auth';
     case AUTH_DRIVER = 'auth.driver';
     case COOKIE      = 'cookie';
-    case VIEW      = 'view';
 }
