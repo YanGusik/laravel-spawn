@@ -16,78 +16,23 @@ use TrueAsync\StaticHandler;
 use TrueAsync\StaticOnMissing;
 use Illuminate\Http\Request;
 use function Async\current_context;
+use function Async\request_context;
 
 class TrueAsyncServer implements ServerInterface
 {
     use ManagesDatabasePool;
 
-    public function __construct(
-        private readonly Application $app,
-        private readonly array $options = [],
-    ) {
+    public function __construct(private $autoloadPath, private $bootstrapPath, private readonly array $options = [])
+    {
     }
 
     public function prepareApp(): void
     {
-        if (!class_exists(\TrueAsync\HttpServer::class)) {
-            throw new \RuntimeException(
-                'TrueAsyncServer extension is not available. '.
-                'Make sure you are running under the TrueAsync server.'
-            );
-        }
 
-        set_time_limit(0);
-
-        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
-            $this->app->enableAsyncMode();
-        }
-
-        $this->configureDatabasePool();
-
-        if (($view = $this->app->make('view')) instanceof \Spawn\Laravel\View\AsyncViewFactory) {
-            $view->bootCompleted();
-        }
-
-        if ($this->app->bound(\Spatie\Permission\PermissionRegistrar::class)) {
-            $registrar = $this->app->make(\Spatie\Permission\PermissionRegistrar::class);
-            if ($registrar instanceof \Spawn\Laravel\Permission\AsyncPermissionRegistrar) {
-                $registrar->bootCompleted();
-            }
-        }
-
-        if ($this->app->bound(\Inertia\ResponseFactory::class)) {
-            $inertia = $this->app->make(\Inertia\ResponseFactory::class);
-            if ($inertia instanceof \Spawn\Laravel\Inertia\AsyncResponseFactory) {
-                $inertia->bootCompleted();
-            }
-        }
-
-        if (($translator = $this->app->make('translator')) instanceof \Spawn\Laravel\Translation\AsyncTranslator) {
-            $translator->bootCompleted();
-        }
-
-        if (($config = $this->app->make('config')) instanceof \Spawn\Laravel\Config\AsyncConfig) {
-            $config->bootCompleted();
-        }
-
-        if (($events = $this->app->make('events')) instanceof \Spawn\Laravel\Events\AsyncDispatcher) {
-            $events->bootCompleted();
-        }
-
-        if (($router = $this->app->make('router')) instanceof \Spawn\Laravel\Routing\AsyncRouter) {
-            $router->bootCompleted();
-        }
-
-        if (class_exists(\Laravel\Telescope\Telescope::class) && method_exists(\Laravel\Telescope\Telescope::class,
-                'enableAsyncRecording')) {
-            \Laravel\Telescope\Telescope::enableAsyncRecording();
-        }
     }
 
     public function start(): void
     {
-        $this->prepareApp();
-
         try {
             $config = $this->buildConfig();
             $server = new HttpServer($config);
@@ -101,33 +46,35 @@ class TrueAsyncServer implements ServerInterface
             ): void {
                 $taRequest->awaitBody();
 
-                // TODO: frankenphp + trueasyncserver refactoring to RequestParser.php
                 $request = $this->convertRequest($taRequest);
 
-                current_context()->set(ScopedService::REQUEST, $request);
+                var_dump(request_context() !== null);
+
+                request_context()->set(ScopedService::REQUEST, $request);
 
                 if ($telescopeEnabled) {
                     \Laravel\Telescope\Telescope::startRecording(false);
                 }
 
-                $kernel = $this->app->make(Kernel::class);
-//                try {
+                $app    = app();
+                $kernel = $app->make(Kernel::class);
+                try {
                     $laravelResponse = $kernel->handle($request);
                     $this->sendResponse($taResponse, $laravelResponse);
 
                     $kernel->terminate($request, $laravelResponse);
-//                } catch (\Throwable $e) {
-//                    fwrite(STDERR, "\n!!! FATAL SERVER ERROR !!!\n");
-//                    fwrite(STDERR, 'Message: '.$e->getMessage()."\n");
-//                    fwrite(STDERR, 'File: '.$e->getFile().':'.$e->getLine()."\n");
-//                    fwrite(STDERR, "Trace:\n".$e->getTraceAsString()."\n");
-//
-//
-//                    $taResponse->setStatusCode(500);
-//                    $taResponse->setHeader('Content-Type', 'text/plain');
-//                    $taResponse->setBody($e->getMessage());
-//                    $taResponse->end();
-//                }
+                } catch (\Throwable $e) {
+                    fwrite(STDERR, "\n!!! FATAL SERVER ERROR !!!\n");
+                    fwrite(STDERR, 'Message: '.$e->getMessage()."\n");
+                    fwrite(STDERR, 'File: '.$e->getFile().':'.$e->getLine()."\n");
+                    fwrite(STDERR, "Trace:\n".$e->getTraceAsString()."\n");
+
+
+                    $taResponse->setStatusCode(500);
+                    $taResponse->setHeader('Content-Type', 'text/plain');
+                    $taResponse->setBody($e->getMessage());
+                    $taResponse->end();
+                }
             });
 
             $server->start();
@@ -195,12 +142,105 @@ class TrueAsyncServer implements ServerInterface
             };
         }
 
-        print_r($this->options);
         $config->setBacklog((int) ($this->options['backlog'] ?? 2048));
         $config->setMaxBodySize((int) ($this->options['max_body_size'] ?? 32 * 1024 * 1024));
         $config->setReadTimeout((int) ($this->options['read_timeout'] ?? 60));
         $config->setWriteTimeout((int) ($this->options['write_timeout'] ?? 60));
         $config->setCompressionEnabled((bool) ($this->options['compression'] ?? true));
+        $config->setWorkers((int) ($this->options['workers']));
+        $config->setLogSeverity(\TrueAsync\LogSeverity::INFO)
+            ->setLogStream(STDERR);
+
+        $autoloadPath  = $this->autoloadPath;
+        $bootstrapPath = $this->bootstrapPath;
+
+        $config->setBootloader(static function () use ($autoloadPath, $bootstrapPath) {
+            require $autoloadPath;
+            $app = require $bootstrapPath;
+            $app->make(\Illuminate\Contracts\Http\Kernel::class)->bootstrap();
+
+
+            if (!class_exists(\TrueAsync\HttpServer::class)) {
+                throw new \RuntimeException(
+                    'TrueAsyncServer extension is not available. '.
+                    'Make sure you are running under the TrueAsync server.'
+                );
+            }
+
+            set_time_limit(0);
+
+            if ($app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+                $app->enableAsyncMode();
+            }
+
+            $poolConfig = $app->make('config')->get('async.db_pool', []);
+
+            if (empty($poolConfig['enabled'])) {
+                return;
+            }
+
+            $connections = $app->make('config')->get('database.connections', []);
+
+            foreach (array_keys($connections) as $name) {
+                $app->make('config')->set(
+                    "database.connections.{$name}.options",
+                    array_replace(
+                        $app->make('config')->get("database.connections.{$name}.options", []),
+                        [
+                            \PDO::ATTR_POOL_ENABLED              => true,
+                            \PDO::ATTR_POOL_MIN                  => $poolConfig['min'] ?? 2,
+                            \PDO::ATTR_POOL_MAX                  => $poolConfig['max'] ?? 10,
+                            \PDO::ATTR_POOL_HEALTHCHECK_INTERVAL => $poolConfig['healthcheck_interval'] ?? 30,
+                        ]
+                    )
+                );
+            }
+
+            // If any connections were already created during bootstrap (before pool
+            // options were set), purge them so they get re-created with pool enabled.
+            if ($app->bound('db')) {
+                $app->make('db')->purge();
+            }
+
+            if (($view = $app->make('view')) instanceof \Spawn\Laravel\View\AsyncViewFactory) {
+                $view->bootCompleted();
+            }
+
+            if ($app->bound(\Spatie\Permission\PermissionRegistrar::class)) {
+                $registrar = $app->make(\Spatie\Permission\PermissionRegistrar::class);
+                if ($registrar instanceof \Spawn\Laravel\Permission\AsyncPermissionRegistrar) {
+                    $registrar->bootCompleted();
+                }
+            }
+
+            if ($app->bound(\Inertia\ResponseFactory::class)) {
+                $inertia = $app->make(\Inertia\ResponseFactory::class);
+                if ($inertia instanceof \Spawn\Laravel\Inertia\AsyncResponseFactory) {
+                    $inertia->bootCompleted();
+                }
+            }
+
+            if (($translator = $app->make('translator')) instanceof \Spawn\Laravel\Translation\AsyncTranslator) {
+                $translator->bootCompleted();
+            }
+
+            if (($config = $app->make('config')) instanceof \Spawn\Laravel\Config\AsyncConfig) {
+                $config->bootCompleted();
+            }
+
+            if (($events = $app->make('events')) instanceof \Spawn\Laravel\Events\AsyncDispatcher) {
+                $events->bootCompleted();
+            }
+
+            if (($router = $app->make('router')) instanceof \Spawn\Laravel\Routing\AsyncRouter) {
+                $router->bootCompleted();
+            }
+
+            if (class_exists(\Laravel\Telescope\Telescope::class) && method_exists(\Laravel\Telescope\Telescope::class,
+                    'enableAsyncRecording')) {
+                \Laravel\Telescope\Telescope::enableAsyncRecording();
+            }
+        });
 
         return $config;
     }
@@ -254,14 +294,14 @@ class TrueAsyncServer implements ServerInterface
         $serverPort = 80;
         // TODO: refactoring
         if ($hostHeader !== '') {
-            $parts = explode(':', $hostHeader);
+            $parts      = explode(':', $hostHeader);
             $serverName = $parts[0];
             $serverPort = isset($parts[1]) ? (int) $parts[1] : 80;
         }
 
         // TODO: refactoring and debug
         if (str_contains($uri, '://')) {
-            $parsed = parse_url($uri);
+            $parsed     = parse_url($uri);
             $serverName = $parsed['host'] ?? $serverName;
             $serverPort = $parsed['port'] ?? $serverPort;
         }
