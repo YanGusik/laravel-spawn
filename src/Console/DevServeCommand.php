@@ -5,9 +5,9 @@ namespace Spawn\Laravel\Console;
 use Illuminate\Console\Command;
 use Spawn\Laravel\Server\DevServer;
 
-class ServeCommand extends Command
+class DevServeCommand extends Command
 {
-    protected $signature = 'async:serve
+    protected $signature = 'async:dev
         {--host=0.0.0.0 : The host to listen on}
         {--port=8080    : The port to listen on}';
 
