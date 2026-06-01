@@ -48,8 +48,6 @@ class TrueAsyncServer implements ServerInterface
 
                 $request = $this->convertRequest($taRequest);
 
-                var_dump(request_context() !== null);
-
                 request_context()->set(ScopedService::REQUEST, $request);
 
                 if ($telescopeEnabled) {
@@ -70,10 +68,13 @@ class TrueAsyncServer implements ServerInterface
                     fwrite(STDERR, "Trace:\n".$e->getTraceAsString()."\n");
 
 
-                    $taResponse->setStatusCode(500);
-                    $taResponse->setHeader('Content-Type', 'text/plain');
-                    $taResponse->setBody($e->getMessage());
-                    $taResponse->end();
+                    if (!$taResponse->isClosed())
+                    {
+                        $taResponse->setStatusCode(500);
+                        $taResponse->setHeader('Content-Type', 'text/plain');
+                        $taResponse->setBody($e->getMessage());
+                        $taResponse->end();
+                    }
                 }
             });
 

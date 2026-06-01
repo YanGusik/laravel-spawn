@@ -209,6 +209,10 @@ class AsyncServiceProvider extends ServiceProvider
         $this->app->singleton('router', function ($app) {
             return new \Spawn\Laravel\Routing\AsyncRouter($app['events'], $app);
         });
+
+        if ($this->app->resolved(\Illuminate\Contracts\Http\Kernel::class)) {
+            $this->app->forgetInstance(\Illuminate\Contracts\Http\Kernel::class);
+        }
     }
 
     private function registerViewAdapter(): void
