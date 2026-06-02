@@ -299,7 +299,7 @@ Check results in [HttpArena](https://www.http-arena.com/leaderboard/#v=composite
 
 **Load:** 840 req/s `/hello` + 360 req/s `/test` = 1 200 req/s total · constant-arrival-rate · 30s · 12 workers each · WSL2 (Linux 6.6 on Windows)
 
-| Metric | PHP-FPM (12w) | Octane Swoole (12w) | TrueAsync (12w) |
+| Metric | PHP-FPM (12w) | Octane Swoole (12w) | TrueAsync-Franken (12w) |
 |---|---|---|---|
 | Target rate | 1 200 req/s | 1 200 req/s | 1 200 req/s |
 | Actual throughput | ~200 req/s | ~752 req/s | **~1 118 req/s** |
@@ -312,7 +312,7 @@ Check results in [HttpArena](https://www.http-arena.com/leaderboard/#v=composite
 
 ### Why TrueAsync wins on DB-bound load
 
-| | PHP-FPM | Octane Swoole | TrueAsync |
+| | PHP-FPM | Octane Swoole | TrueAsync-Franken |
 |---|---|---|---|
 | Request model | Process per request | 1 process = 1 request at a time | 1 worker = N coroutines |
 | DB I/O | Blocking (new conn each req) | Blocking (PDO synchronous) | Non-blocking (coroutine yield) |
