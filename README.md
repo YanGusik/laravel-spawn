@@ -83,12 +83,22 @@ php artisan vendor:publish --tag=async-config
 
 ## Servers
 
+### True Async Server
+
+Production-ready adapter using [True Async Server](https://true-async.github.io/en/docs/server/) in async worker mode.
+
+Check `config/async.php`!
+
+```bash
+php artisan async:serve --host=0.0.0.0 --port=8080 --workers=1
+```
+
 ### Dev server
 
 Simple TCP socket server for local development. Analogous to `php artisan serve`.
 
 ```bash
-php artisan async:serve --host=0.0.0.0 --port=8080
+php artisan async:dev --host=0.0.0.0 --port=8080
 ```
 
 ### FrankenPHP
