@@ -12,6 +12,7 @@ use Spawn\Laravel\Foundation\ScopedService;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 use function Async\current_context;
+use function Async\spawn;
 
 class DevServer implements ServerInterface
 {
@@ -82,11 +83,13 @@ class DevServer implements ServerInterface
         $shutdownState = new FutureState();
         $shutdownFuture = (new Future($shutdownState))->ignore();
 
-        if (function_exists('pcntl_async_signals')) {
-            pcntl_async_signals(true);
-            pcntl_signal(SIGTERM, fn() => $shutdownState->complete(null));
-            pcntl_signal(SIGINT, fn() => $shutdownState->complete(null));
-        }
+        spawn(function () use ($shutdownState) {
+            \Async\await_any_or_fail([
+                \Async\signal(\Async\Signal::SIGINT),
+                \Async\signal(\Async\Signal::SIGTERM),
+            ]);
+            $shutdownState->complete(null);
+        });
 
         $this->serverScope = new Scope();
         $serverScope = $this->serverScope;
@@ -113,11 +116,7 @@ class DevServer implements ServerInterface
                     continue;
                 }
 
-                // Each request gets its own Scope so that current_context()
-                // is isolated per-request and child coroutines can access
-                // request-scoped services via hierarchical find().
                 $requestScope = Scope::inherit($serverScope);
-
                 $requestScope->setExceptionHandler(function (\Throwable $e) {
                     echo "[request error] " . $e::class . ": " . $e->getMessage() . "\n";
                 });
