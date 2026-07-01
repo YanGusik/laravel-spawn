@@ -3,6 +3,7 @@
 namespace Spawn\Laravel;
 
 use Illuminate\Support\ServiceProvider;
+use Inertia\Ssr\SsrState;
 use Spawn\Laravel\Console\FrankenServeCommand;
 use Spawn\Laravel\Console\DevServeCommand;
 use Spawn\Laravel\Console\TrueAsyncServeCommand;
@@ -57,6 +58,11 @@ class AsyncServiceProvider extends ServiceProvider
         if (! class_exists(\Inertia\ResponseFactory::class)) {
             return;
         }
+
+        $this->app->scopedSingleton(
+            SsrState::class,
+            fn ($app) => new SsrState(),
+        );
 
         $this->app->singleton(
             \Inertia\ResponseFactory::class,
