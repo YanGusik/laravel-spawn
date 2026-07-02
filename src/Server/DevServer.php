@@ -117,8 +117,8 @@ class DevServer implements ServerInterface
                 }
 
                 $requestScope = Scope::inherit($serverScope);
-                $requestScope->setExceptionHandler(function (\Throwable $e) {
-                    echo "[request error] " . $e::class . ": " . $e->getMessage() . "\n";
+                $requestScope->setExceptionHandler(function (\Async\Scope $scope, \Async\Coroutine $coroutine, \Throwable $e) {
+                    echo "[request error] " . $e::class . ": " . $e->getMessage() . " @ " . $e->getFile() . ":" . $e->getLine() . "\n";
                 });
 
                 $requestScope->spawn($this->handleConnection(...), $client, $requestScope);
@@ -142,9 +142,16 @@ class DevServer implements ServerInterface
                 return;
             }
 
-            $request = RequestParser::parse($raw);
+            $peer = @stream_socket_get_name($client, true);
+            $remoteAddr = $peer !== false && ($pos = strrpos($peer, ':')) !== false
+                ? substr($peer, 0, $pos)
+                : '127.0.0.1';
+
+            $request = RequestParser::parse($raw, $remoteAddr);
 
             current_context()->set(ScopedService::REQUEST, $request);
+
+            \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
             $kernel = $this->app->make(Kernel::class);
             $response = $kernel->handle($request);

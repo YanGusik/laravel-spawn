@@ -97,6 +97,8 @@ class FrankenPhpServer implements ServerInterface
 
                 current_context()->set(ScopedService::REQUEST, $request);
 
+                \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
+
                 if ($telescopeEnabled) {
                     \Laravel\Telescope\Telescope::startRecording(false);
                 }
