@@ -1,0 +1,37 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  tests:
+    name: Tests (TrueAsync PHP 8.6)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # The test suite needs the TrueAsync runtime (Async\spawn, coroutines, ...),
+      # so it runs inside the official image. We don't use `container:` because that
+      # image is PHP-only (no Node.js, which GitHub's JS actions like checkout need);
+      # instead we checkout on the host and run the suite in the image via docker.
+      # Image: https://github.com/true-async/releases
+      - name: Run the test suite in the TrueAsync PHP image
+        run: |
+          docker run --rm -v "$PWD":/app -w /app -e COMPOSER_ALLOW_SUPERUSER=1 \
+            trueasync/php-true-async:latest bash -euc '
+              php -v
+              php -m | grep -i async
+              command -v curl >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends curl; }
+              curl -sSL https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
+              chmod +x /usr/local/bin/composer
+              # PHP is 8.6; a few transitive dev deps cap at 8.5, so ignore the php
+              # upper bound only (php+). The async runtime itself requires 8.6.
+              composer install --no-interaction --no-progress --prefer-dist --ignore-platform-req=php+
+              vendor/bin/phpunit --colors=never
+            '
