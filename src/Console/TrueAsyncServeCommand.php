@@ -31,7 +31,7 @@ class TrueAsyncServeCommand extends Command
         $port    = (int) ($this->option('port') ?? $cfg['listeners'][0]['port'] ?? 8080);
         $workers = (int) ($this->option('workers') ?? $cfg['workers'] ?? 0);
         if ($workers <= 0) {
-            $workers = $this->detectCoreCount();
+            $workers = \Async\available_parallelism();
         }
 
         // Merge first listener with CLI overrides, preserve tls/protocol
@@ -51,16 +51,5 @@ class TrueAsyncServeCommand extends Command
         $server->start();
 
         return self::SUCCESS;
-    }
-
-    private function detectCoreCount(): int
-    {
-        if (is_file('/proc/cpuinfo')) {
-            preg_match_all('/^processor/m', file_get_contents('/proc/cpuinfo'), $m);
-
-            return count($m[0]) ?: 1;
-        }
-
-        return 1;
     }
 }
