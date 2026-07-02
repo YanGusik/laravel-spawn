@@ -41,6 +41,21 @@ class AsyncServiceProvider extends ServiceProvider
         ], 'async-config');
     }
 
+    private function registerDebugbarAdapter(): void
+    {
+        if (! class_exists(\Fruitcake\LaravelDebugbar\LaravelDebugbar::class)) {
+            return;
+        }
+
+        // Serve Debugbar from a context-aware subclass: one shared instance,
+        // per-coroutine request state. extend() runs at resolve time, so it wins
+        // regardless of provider registration order.
+        $this->app->extend(
+            \Fruitcake\LaravelDebugbar\LaravelDebugbar::class,
+            fn ($debugbar, $app) => new \Spawn\Laravel\Debugbar\AsyncDebugbar($app, $app['request']),
+        );
+    }
+
     private function registerPermissionAdapter(): void
     {
         if (! class_exists(\Spatie\Permission\PermissionRegistrar::class)) {
@@ -113,21 +128,6 @@ class AsyncServiceProvider extends ServiceProvider
         });
     }
 
-    private function registerDebugbarAdapter(): void
-    {
-        if (! class_exists(\Fruitcake\LaravelDebugbar\LaravelDebugbar::class)) {
-            return;
-        }
-
-        // Debugbar collectors accumulate per-request data (queries, events, etc.).
-        // scopedSingleton gives each coroutine its own debugbar instance.
-        if ($this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
-            $this->app->scopedSingleton(
-                \Fruitcake\LaravelDebugbar\LaravelDebugbar::class,
-                fn ($app) => new \Fruitcake\LaravelDebugbar\LaravelDebugbar($app, $app['request']),
-            );
-        }
-    }
 
     private function registerDatabaseAdapter(): void
     {

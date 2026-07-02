@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Added
+- Laravel Debugbar compatibility (#14) — Debugbar now renders under async serving, with per-coroutine data isolation
+  - `AsyncDebugbar` — one instance per worker; request state (collected snapshot, `responseIsModified`) kept per-coroutine via `current_context()`; persistent storage disabled (its inline I/O in `collect()` would break render atomicity under concurrency)
+  - Context-backed collectors (`messages`, `time`, `exceptions`, `query`) via `DelegatesToContext` — one shared instance, per-coroutine data, so concurrent requests never mix debug data (`events`/`models` are a follow-up)
+  - `AsyncApplication::runningInConsole()` returns `false` while serving, so Debugbar (and other web-only packages) detect web context instead of the CLI SAPI
+  - `ResetDebugbar` — per-request reset + boot, mirroring Laravel Octane's `ResetDebugbar`
 - `AsyncApplication` — extends Laravel's `Application` with per-coroutine service isolation
   - `enableAsyncMode()` — must be called before the HTTP server starts; artisan commands run as normal Laravel
   - `LARAVEL_SCOPED` — services that get a fresh instance per coroutine: `session`, `auth`, `auth.driver`, `cookie`
@@ -26,6 +31,10 @@
   - `ScopedServiceIsolationTest` — verifies scoped vs singleton behavior, session/auth isolation
   - `RequestIsolationTest` — verifies `app('request')` isolation per coroutine
   - `DatabaseIsolationTest` — documents that `db` is intentionally a singleton; PDO Pool handles physical connection isolation at the C level
+
+### Fixed
+- `DevServer` request exception handler had a 1-arg `Throwable` signature but the scope invokes it with `(Scope, Coroutine, Throwable)` — every request error was swallowed by a `TypeError`; signature corrected
+- `RequestParser` did not set `REMOTE_ADDR`, so `Request::getClientIp()` returned `null` — `DevServer` now passes the socket peer address (fixes Debugbar and anything else reading the client IP)
 
 ### Verified
 - `cache`, `mail`, `queue` managers do not hold per-request state — no scoping needed, confirmed via parallel isolation tests
