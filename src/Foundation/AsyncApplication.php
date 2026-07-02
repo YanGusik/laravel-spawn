@@ -43,22 +43,6 @@ class AsyncApplication extends Application
         return $this->asyncMode;
     }
 
-    /**
-     * While serving HTTP the worker is a web app, not a console command — even
-     * though it was launched from the CLI. Once async serving is active, let the
-     * framework and packages (Debugbar, etc.) detect web context. runningInConsole()
-     * is Laravel's own gate for this; overriding it here is honest about the runtime
-     * mode and avoids relying on the PHP_SAPI fallback.
-     */
-    public function runningInConsole(): bool
-    {
-        if ($this->asyncMode) {
-            return false;
-        }
-
-        return parent::runningInConsole();
-    }
-
     public function enableAsyncMode(): void
     {
         $this->asyncMode = true;

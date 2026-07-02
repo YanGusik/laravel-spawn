@@ -6,7 +6,7 @@ use Illuminate\Http\Request;
 
 class RequestParser
 {
-    public static function parse(string $raw, string $remoteAddr = '127.0.0.1'): Request
+    public static function parse(string $raw): Request
     {
         [$headerSection, $body] = array_pad(explode("\r\n\r\n", $raw, 2), 2, '');
 
@@ -35,7 +35,6 @@ class RequestParser
             'SERVER_NAME'     => 'localhost',
             'SERVER_PORT'     => '8080',
             'SERVER_PROTOCOL' => 'HTTP/1.1',
-            'REMOTE_ADDR'     => $remoteAddr,
         ];
 
         foreach ($headers as $name => $value) {

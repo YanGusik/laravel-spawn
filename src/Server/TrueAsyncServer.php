@@ -55,9 +55,6 @@ class TrueAsyncServer implements ServerInterface
                 }
 
                 $app    = app();
-
-                \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
-
                 $kernel = $app->make(Kernel::class);
                 try {
                     $laravelResponse = $kernel->handle($request);
