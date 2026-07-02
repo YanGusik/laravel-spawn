@@ -13,6 +13,7 @@ return [
     'providers' => [
         Illuminate\View\ViewServiceProvider::class,
         Illuminate\Filesystem\FilesystemServiceProvider::class,
+        Illuminate\Cache\CacheServiceProvider::class,
         Illuminate\Log\LogServiceProvider::class,
         Illuminate\Translation\TranslationServiceProvider::class,
         Illuminate\Routing\RoutingServiceProvider::class,
