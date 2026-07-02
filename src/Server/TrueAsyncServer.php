@@ -156,6 +156,7 @@ class TrueAsyncServer implements ServerInterface
         $bootstrapPath = $this->bootstrapPath;
 
         $config->setBootloader(static function () use ($autoloadPath, $bootstrapPath) {
+            $_ENV['APP_RUNNING_IN_CONSOLE'] = false;
             require $autoloadPath;
             $app = require $bootstrapPath;
             $app->make(\Illuminate\Contracts\Http\Kernel::class)->bootstrap();
