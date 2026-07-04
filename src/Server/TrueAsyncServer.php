@@ -146,6 +146,23 @@ class TrueAsyncServer implements ServerInterface
             };
         }
 
+        if (app()->isProduction()) {
+            $config->enableReloadOnSignal();
+        } else {
+            $config->enableHotReload(
+                array_map(
+                    base_path(...),
+                    [
+                        'app',
+                        'bootstrap',
+                        'config',
+                        'resources',
+                        'routes',
+                    ]
+                )
+            );
+        }
+
         $config->setBacklog((int) ($this->options['backlog'] ?? 2048));
         $config->setMaxBodySize((int) ($this->options['max_body_size'] ?? 32 * 1024 * 1024));
         $config->setReadTimeout((int) ($this->options['read_timeout'] ?? 60));
