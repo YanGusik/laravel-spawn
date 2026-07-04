@@ -31,6 +31,7 @@
   - `ScopedServiceIsolationTest` — verifies scoped vs singleton behavior, session/auth isolation
   - `RequestIsolationTest` — verifies `app('request')` isolation per coroutine
   - `DatabaseIsolationTest` — documents that `db` is intentionally a singleton; PDO Pool handles physical connection isolation at the C level
+  - `HttpE2ETest` + `tests/e2e/run.php` — in-process HTTP end-to-end suite: boots the bench fixture in a real worker thread (`spawn_thread`) and drives it over a loopback socket with concurrent coroutine clients (routing, per-request isolation across an I/O yield, error resilience) — no external server process, teardown via the DevServer's own SIGTERM handler
 
 ### Fixed
 - `DevServer` request exception handler had a 1-arg `Throwable` signature but the scope invokes it with `(Scope, Coroutine, Throwable)` — every request error was swallowed by a `TypeError`; signature corrected
