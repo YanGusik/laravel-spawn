@@ -136,7 +136,7 @@ services:
       DB_PASSWORD: secret
 ```
 
-### Dev server (no FrankenPHP required)
+### Dev server
 
 ```yaml
 services:
@@ -189,15 +189,44 @@ services:
 If you use TrueAsyncServer, pls read docs: [Configuration](https://true-async.github.io/en/docs/server/configuration.html)
 
 ```php
+<?php
+
 return [
+
+    /*
+    |--------------------------------------------------------------------------
+    | Scoped Services
+    |--------------------------------------------------------------------------
+    |
+    | Services listed here will be resolved per-coroutine instead of shared
+    | as singletons. Use this for third-party packages that hold request state.
+    |
+    | Example:
+    |   \SomePackage\Manager::class,
+    |
+    */
+
+    'scoped_services' => [],
+
+    /*
+    |--------------------------------------------------------------------------
+    | Database Connection Pool
+    |--------------------------------------------------------------------------
+    |
+    | When the async server is running, each coroutine gets its own
+    | DatabaseManager instance. The underlying PDO connections are managed
+    | by TrueAsync's built-in pool, so physical connections are reused
+    | across coroutines instead of creating a new one per request.
+    |
+    */
+
     'db_pool' => [
-        'enabled'              => env('ASYNC_DB_POOL_ENABLED', true),
-        'min'                  => env('ASYNC_DB_POOL_MIN', 2),
-        'max'                  => env('ASYNC_DB_POOL_MAX', 10),
-        'healthcheck_interval' => env('ASYNC_DB_POOL_HEALTHCHECK', 30),
+        'enabled' => true,
+        'min'     => 2,
+        'max'     => 10,
+        'healthcheck_interval' => 30, // seconds, 0 = disabled
     ],
-    
-    
+
     /*
     |--------------------------------------------------------------------------
     | Async Server
@@ -287,7 +316,29 @@ return [
         */
 
         'static_handlers' => [],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Hot Reload
+        |--------------------------------------------------------------------------
+        |
+        | Configure hot reload for the TrueAsync server during development.
+        | When enabled, the server watches the configured paths and automatically
+        | reloads whenever a file changes.
+        |
+        | Paths are relative to the application base path.
+        |
+        */
+
+        'hot_reload_paths' => [
+            'app',
+            'bootstrap',
+            'config',
+            'resources',
+            'routes',
+        ],
     ],
+
 ];
 ```
 
