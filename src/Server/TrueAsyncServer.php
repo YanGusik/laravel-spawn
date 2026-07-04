@@ -146,20 +146,14 @@ class TrueAsyncServer implements ServerInterface
             };
         }
 
+
+        $hotReloadPaths = config('async.server.hot_reload_paths', []);
+
         if (app()->isProduction()) {
             $config->enableReloadOnSignal();
-        } else {
+        } elseif ($hotReloadPaths !== []) {
             $config->enableHotReload(
-                array_map(
-                    base_path(...),
-                    [
-                        'app',
-                        'bootstrap',
-                        'config',
-                        'resources',
-                        'routes',
-                    ]
-                )
+                array_map(base_path(...), $hotReloadPaths)
             );
         }
 

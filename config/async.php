@@ -125,6 +125,27 @@ return [
         */
 
         'static_handlers' => [],
+
+        /*
+        |--------------------------------------------------------------------------
+        | Hot Reload
+        |--------------------------------------------------------------------------
+        |
+        | Configure hot reload for the TrueAsync server during development.
+        | When enabled, the server watches the configured paths and automatically
+        | reloads whenever a file changes.
+        |
+        | Paths are relative to the application base path.
+        |
+        */
+
+        'hot_reload_paths' => [
+            'app',
+            'bootstrap',
+            'config',
+            'resources',
+            'routes',
+        ],
     ],
 
 ];
