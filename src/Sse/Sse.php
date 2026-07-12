@@ -29,9 +29,9 @@ final class Sse
         trueasync_response()->sseEvent(data: $data, event: $event, id: $id);
     }
 
-    public static function comment(): void
+    public static function comment(?string $text = null): void
     {
-        trueasync_response()->sseComment();
+        $text === null ? trueasync_response()->sseComment() : trueasync_response()->sseComment($text);
     }
 
     /**

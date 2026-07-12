@@ -18,6 +18,7 @@ use TrueAsync\StaticOnMissing;
 use Illuminate\Http\Request;
 use function Async\current_context;
 use function Async\request_context;
+use function Async\spawn;
 
 class TrueAsyncServer implements ServerInterface
 {
@@ -40,6 +41,7 @@ class TrueAsyncServer implements ServerInterface
 
             $this->registerStaticHandlers($server);
             $this->registerGrpcHandlers($server);
+            $this->registerShutdownSignals($server);
 
             $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
                 && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
@@ -360,6 +362,33 @@ class TrueAsyncServer implements ServerInterface
         );
     }
 
+    /**
+     * SIGTERM/SIGINT have no default disposition for a PID-1 process without
+     * its own handler (the common case: a bare `php artisan async:serve` as
+     * the container entrypoint) — the kernel simply drops them, and
+     * HttpServer::start() blocks forever. TrueAsync's own signal() lets us
+     * catch them like any other coroutine event and stop the server
+     * ourselves, exactly like DevServer's hand-rolled accept loop already does.
+     */
+    private function registerShutdownSignals(HttpServer $server): void
+    {
+        spawn(function () use ($server): void {
+            \Async\await_any_or_fail([
+                \Async\signal(\Async\Signal::SIGINT),
+                \Async\signal(\Async\Signal::SIGTERM),
+            ]);
+
+            try {
+                $server->stop();
+            } catch (\Throwable $e) {
+                // Pool mode (config('async.server.workers') > 1) can't be
+                // stopped from the parent yet — true-async/server#117.
+                // Nothing more to do from here until that lands upstream.
+                fwrite(STDERR, "[trueasync-server] graceful stop failed: {$e->getMessage()}\n");
+            }
+        });
+    }
+
     private function registerGrpcHandlers(HttpServer $server): void
     {
         $handlers = $this->options['grpc_handlers'] ?? [];
@@ -384,9 +413,8 @@ class TrueAsyncServer implements ServerInterface
                 return;
             }
 
-            [$class, $method] = $handlers[$path];
-
             try {
+                [$class, $method] = $handlers[$path];
                 app($class)->$method($taRequest, $taResponse);
             } catch (\Throwable $e) {
                 fwrite(STDERR, "\n!!! GRPC HANDLER ERROR ({$path}) !!!\n{$e}\n");
