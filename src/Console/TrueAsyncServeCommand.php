@@ -38,8 +38,9 @@ class TrueAsyncServeCommand extends Command
         $listener = array_merge($cfg['listeners'][0] ?? [], compact('host', 'port'));
 
         $options = array_merge($cfg, [
-            'listeners' => [$listener],
-            'workers'   => $workers,
+            'listeners'      => [$listener],
+            'workers'        => $workers,
+            'grpc_handlers'  => config('async.grpc_handlers', []),
         ]);
 
         $this->info("Starting TrueAsync server with {$workers} workers on {$host}:{$port}");
