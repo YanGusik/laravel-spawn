@@ -4,6 +4,7 @@ namespace Spawn\Laravel\Server;
 
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
+use Spawn\Laravel\Async\RawIo;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\ScopedService;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
@@ -17,6 +18,7 @@ use TrueAsync\StaticOnMissing;
 use Illuminate\Http\Request;
 use function Async\current_context;
 use function Async\request_context;
+use function Async\spawn;
 
 class TrueAsyncServer implements ServerInterface
 {
@@ -38,6 +40,8 @@ class TrueAsyncServer implements ServerInterface
             $server = new HttpServer($config);
 
             $this->registerStaticHandlers($server);
+            $this->registerGrpcHandlers($server);
+            $this->registerShutdownSignals($server);
 
             $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
                 && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
@@ -48,6 +52,7 @@ class TrueAsyncServer implements ServerInterface
 
                 $request = $this->convertRequest($taRequest);
 
+                RawIo::set($taRequest, $taResponse);
                 request_context()->set(ScopedService::REQUEST, $request);
 
                 if ($telescopeEnabled) {
@@ -357,8 +362,79 @@ class TrueAsyncServer implements ServerInterface
         );
     }
 
+    /**
+     * SIGTERM/SIGINT have no default disposition for a PID-1 process without
+     * its own handler (the common case: a bare `php artisan async:serve` as
+     * the container entrypoint) — the kernel simply drops them, and
+     * HttpServer::start() blocks forever. TrueAsync's own signal() lets us
+     * catch them like any other coroutine event and stop the server
+     * ourselves, exactly like DevServer's hand-rolled accept loop already does.
+     */
+    private function registerShutdownSignals(HttpServer $server): void
+    {
+        spawn(function () use ($server): void {
+            \Async\await_any_or_fail([
+                \Async\signal(\Async\Signal::SIGINT),
+                \Async\signal(\Async\Signal::SIGTERM),
+            ]);
+
+            try {
+                $server->stop();
+            } catch (\Throwable $e) {
+                // Pool mode (config('async.server.workers') > 1) can't be
+                // stopped from the parent yet — true-async/server#117.
+                // Nothing more to do from here until that lands upstream.
+                fwrite(STDERR, "[trueasync-server] graceful stop failed: {$e->getMessage()}\n");
+            }
+        });
+    }
+
+    private function registerGrpcHandlers(HttpServer $server): void
+    {
+        $handlers = $this->options['grpc_handlers'] ?? [];
+
+        if ($handlers === []) {
+            return;
+        }
+
+        // gRPC messages (protobuf) have no Symfony Request/Response equivalent,
+        // so unlike addHttpHandler this bypasses the Laravel Kernel entirely.
+        // The handler still runs after the same bootloader (DB pool, isolation
+        // adapters are already active), just without routing/middleware.
+        $server->addGrpcHandler(function (HttpRequest $taRequest, HttpResponse $taResponse) use ($handlers): void {
+            RawIo::set($taRequest, $taResponse);
+
+            $path = $taRequest->getPath();
+
+            if (!isset($handlers[$path])) {
+                $taResponse->setTrailer('grpc-status', '12'); // UNIMPLEMENTED
+                $taResponse->setTrailer('grpc-message', "no handler registered for {$path}");
+
+                return;
+            }
+
+            try {
+                [$class, $method] = $handlers[$path];
+                app($class)->$method($taRequest, $taResponse);
+            } catch (\Throwable $e) {
+                fwrite(STDERR, "\n!!! GRPC HANDLER ERROR ({$path}) !!!\n{$e}\n");
+
+                if (!$taResponse->isClosed()) {
+                    $taResponse->setTrailer('grpc-status', '13'); // INTERNAL
+                    $taResponse->setTrailer('grpc-message', $e->getMessage());
+                }
+            }
+        });
+    }
+
     private function sendResponse(HttpResponse $taResponse, SymfonyResponse $response): void
     {
+        // Already streamed and closed directly (Sse::end(), or any other code
+        // that wrote to trueasync_response() itself) — nothing left to send.
+        if ($taResponse->isClosed()) {
+            return;
+        }
+
         $taResponse->setStatusCode($response->getStatusCode());
 
         foreach ($response->headers->allPreserveCaseWithoutCookies() as $name => $values) {

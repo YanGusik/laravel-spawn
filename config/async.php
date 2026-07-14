@@ -38,6 +38,26 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | gRPC Handlers
+    |--------------------------------------------------------------------------
+    |
+    | gRPC messages (protobuf) have no Symfony Request/Response equivalent, so
+    | they bypass routing/middleware/the HTTP Kernel entirely. Map each fully
+    | qualified method path to a [class, method] pair; the method receives the
+    | raw (TrueAsync\HttpRequest $req, TrueAsync\HttpResponse $res) and reads/
+    | writes messages with $req->readMessage() / $res->writeMessage().
+    |
+    | Example:
+    |   '/profile.ProfileService/GetProfile' => [
+    |       \App\Grpc\ProfileServiceHandler::class, 'getProfile',
+    |   ],
+    |
+    */
+
+    'grpc_handlers' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Async Server
     |--------------------------------------------------------------------------
     |

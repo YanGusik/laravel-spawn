@@ -34,3 +34,15 @@ $router->get('/iso', function (Illuminate\Http\Request $request) {
 $router->get('/boom', function () {
     throw new \RuntimeException('boom');
 });
+
+// SSE probe (StreamingE2ETest, TrueAsyncServer only): writes directly to the
+// raw HttpResponse and closes it, so TrueAsyncServer::sendResponse() must skip
+// the buffered path entirely once isClosed() is true.
+$router->get('/stream', function () {
+    \Spawn\Laravel\Sse\Sse::start();
+    \Spawn\Laravel\Sse\Sse::event(data: 'one', event: 'tick', id: '1');
+    \Spawn\Laravel\Sse\Sse::event(data: 'two', event: 'tick', id: '2');
+    \Spawn\Laravel\Sse\Sse::end();
+
+    return response()->noContent();
+});
