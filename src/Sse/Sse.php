@@ -35,7 +35,9 @@ final class Sse
     }
 
     /**
-     * False once the client has gone away — stop producing events.
+     * True while the outbound buffer has room for the next event. False means
+     * backpressure, not a client that left — event() waits for room by itself,
+     * so breaking a loop on false only drops events from a slow stream.
      */
     public static function connected(): bool
     {
