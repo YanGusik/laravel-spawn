@@ -35,13 +35,21 @@ final class Sse
     }
 
     /**
-     * True while the outbound buffer has room for the next event. False means
-     * backpressure, not a client that left — event() waits for room by itself,
-     * so breaking a loop on false only drops events from a slow stream.
+     * True while the client is still there — false means stop producing events.
+     *
+     * On a server build without isWritable() this falls back to sendable(),
+     * where false can also mean a full outbound buffer, so a slow reader ends
+     * the stream early. event() itself waits for room either way.
      */
     public static function connected(): bool
     {
-        return trueasync_response()->sendable();
+        $response = trueasync_response();
+
+        if (method_exists($response, 'isWritable')) {
+            return $response->isWritable();
+        }
+
+        return $response->sendable();
     }
 
     public static function end(): void
