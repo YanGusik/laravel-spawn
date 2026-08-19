@@ -1,0 +1,37 @@
+name: Laravel drift
+
+# The two Eloquent files under overrides/ are copies, frozen against the release they were
+# taken from. A newer Laravel that touches either one leaves an application on Laravel's own
+# classes — the defect comes back, quietly, with a line on stderr. This job installs the
+# newest Laravel 13 every night and fails when that has happened, so the copies are brought
+# forward by whoever maintains the package rather than discovered by whoever runs it.
+#
+# Bring them forward with `php bin/refresh-eloquent-overrides.php`, which re-copies both files,
+# re-applies the edits and prints the checksums to put into EloquentOverrides.
+
+on:
+  schedule:
+    - cron: '0 3 * * *'
+  workflow_dispatch:
+
+jobs:
+  drift:
+    name: Copies against the newest Laravel 13
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the newest Laravel 13 and check the copies against it
+        run: |
+          docker run --rm -v "$PWD":/app -w /app -e COMPOSER_ALLOW_SUPERUSER=1 \
+            trueasync/php-true-async:latest bash -euc '
+              command -v curl >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends curl; }
+              curl -sSL https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
+              chmod +x /usr/local/bin/composer
+              # composer.json pins the release the copies were taken from; this job is the one
+              # place that deliberately looks past it.
+              composer require --no-update --no-interaction "laravel/framework:^13.0"
+              composer update --with-all-dependencies --no-interaction --no-progress --prefer-dist --ignore-platform-req=php+
+              composer show laravel/framework | head -3
+              vendor/bin/phpunit --colors=never --filter EloquentOverridesTest
+            '
