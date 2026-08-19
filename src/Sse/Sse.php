@@ -35,16 +35,9 @@ final class Sse
     }
 
     /**
-     * Whether the next event fits into the outbound buffer right now.
-     *
-     * False does NOT mean the client left. On HTTP/2 and HTTP/3 it means the
-     * per-stream queue is full, and on HTTP/1 the answer is always true because
-     * there is no such queue. A loop that breaks on false ends a stream that is
-     * only slow, and drops the events it was about to write; event() is safe to
-     * call either way, since it waits for room instead of failing.
-     *
-     * A real liveness check is coming with the server's `isWritable()`, and this
-     * method will move to it.
+     * True while the outbound buffer has room for the next event. False means
+     * backpressure, not a client that left — event() waits for room by itself,
+     * so breaking a loop on false only drops events from a slow stream.
      */
     public static function connected(): bool
     {
