@@ -43,12 +43,13 @@ final class Sse
      */
     public static function connected(): bool
     {
-        static $liveness = null;
-
         $response = trueasync_response();
-        $liveness ??= method_exists($response, 'isWritable');
 
-        return $liveness ? $response->isWritable() : $response->sendable();
+        if (method_exists($response, 'isWritable')) {
+            return $response->isWritable();
+        }
+
+        return $response->sendable();
     }
 
     public static function end(): void
