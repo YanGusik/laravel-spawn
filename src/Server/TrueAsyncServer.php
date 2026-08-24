@@ -103,7 +103,7 @@ class TrueAsyncServer implements ServerInterface
 
 
                     // A status line already on the wire has no replacement, and asking for one throws.
-                    if (!$taResponse->isClosed() && !$taResponse->isHeadersSent())
+                    if (!$taResponse->isEnded() && !$taResponse->isHeadersSent())
                     {
                         $taResponse->setStatusCode(500);
                         $taResponse->setHeader('Content-Type', 'text/plain');
@@ -425,7 +425,7 @@ class TrueAsyncServer implements ServerInterface
             } catch (\Throwable $e) {
                 fwrite(STDERR, "\n!!! GRPC HANDLER ERROR ({$path}) !!!\n{$e}\n");
 
-                if (!$taResponse->isClosed()) {
+                if (!$taResponse->isEnded()) {
                     $taResponse->setTrailer('grpc-status', '13'); // INTERNAL
                     $taResponse->setTrailer('grpc-message', $e->getMessage());
                 }
@@ -440,10 +440,10 @@ class TrueAsyncServer implements ServerInterface
     {
         // Already streamed and closed directly (Sse::end(), or any other code
         // that wrote to trueasync_response() itself) — nothing left to send.
-        /* send() leaves the response open with its setters sealed, so closed alone is not the
+        /* write() leaves the response open with its setters sealed, so ended alone is not the
          * whole test. sendFile() seals it while raising neither flag and there is nothing to
          * ask, which is why the first setter doubles as the probe. */
-        if ($taResponse->isClosed() || $taResponse->isHeadersSent()) {
+        if ($taResponse->isEnded() || $taResponse->isHeadersSent()) {
             return;
         }
 
@@ -522,7 +522,7 @@ class TrueAsyncServer implements ServerInterface
             }
 
             try {
-                $taResponse->send($chunk);
+                $taResponse->write($chunk);
             } catch (\Throwable) {
                 $peerGone = true;
             }
