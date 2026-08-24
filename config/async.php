@@ -205,19 +205,40 @@ return [
         |--------------------------------------------------------------------------
         |
         | Map URL prefixes to local directories for direct static file serving
-        | bypassing the Laravel kernel.
+        | bypassing the Laravel kernel. Nothing is served that is not listed
+        | here: an empty list means every request reaches the kernel.
         |
-        | Example:
+        | The first entry is Laravel's own document root, the files a web server
+        | would have served before PHP ever saw the request. Behind nginx they
+        | never reach this process; served by this process they have to be named.
+        | 'on_missing' => 'next' is what makes a mount at "/" usable — a path
+        | with no file behind it goes on to the kernel — and 'hide' keeps
+        | public/index.php off the wire, since the front controller's source is
+        | not a response. Delete the entry to serve nothing from disk.
+        |
+        | Requires true_async_server 0.14.0 for the mount at "/"; on an older
+        | build it is skipped with a line on stderr.
+        |
+        | Example of a second mount:
         |   [
         |       'prefix' => '/assets/',
         |       'root'   => public_path('assets'),
         |       'etag'   => true,
+        |       'hide'   => ['*.php'],
         |       'precompressed' => ['br', 'gzip'],
         |   ]
         |
         */
 
-        'static_handlers' => [],
+        'static_handlers' => [
+            [
+                'prefix'     => '/',
+                'root'       => public_path(),
+                'etag'       => true,
+                'on_missing' => 'next',
+                'hide'       => ['*.php'],
+            ],
+        ],
 
         /*
         |--------------------------------------------------------------------------
