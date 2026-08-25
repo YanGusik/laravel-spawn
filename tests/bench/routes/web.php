@@ -107,7 +107,7 @@ $router->get('/render-load', function (Illuminate\Http\Request $request) {
 
 // SSE probe (StreamingE2ETest, TrueAsyncServer only): writes directly to the
 // raw HttpResponse and closes it, so TrueAsyncServer::sendResponse() must skip
-// the buffered path entirely once isClosed() is true.
+// the buffered path entirely once isEnded() is true.
 $router->get('/stream', function () {
     \Spawn\Laravel\Sse\Sse::start();
     \Spawn\Laravel\Sse\Sse::event(data: 'one', event: 'tick', id: '1');

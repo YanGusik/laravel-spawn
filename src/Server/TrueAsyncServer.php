@@ -103,7 +103,7 @@ class TrueAsyncServer implements ServerInterface
 
 
                     // A status line already on the wire has no replacement, and asking for one throws.
-                    if (!$taResponse->isClosed() && !$taResponse->isHeadersSent())
+                    if (!$taResponse->isEnded() && !$taResponse->isHeadersSent())
                     {
                         $taResponse->setStatusCode(500);
                         $taResponse->setHeader('Content-Type', 'text/plain');
@@ -239,13 +239,42 @@ class TrueAsyncServer implements ServerInterface
         WorkerBootstrap::run($app);
     }
 
+    /* A mount at the root exposes whatever the directory holds, so it is served
+     * only where the configuration names it. The extension gained the prefix "/"
+     * in 0.13.0 and made hide('*.php') cover every depth in 0.14.0; on anything
+     * older such a mount throws at the constructor or serves admin/tools.php as
+     * text, and refusing it with a line on stderr beats both. */
+    private const ROOT_MOUNT_MINIMUM_SERVER = '0.14.0';
+
+    private function rootMountIsServable(string $prefix): bool
+    {
+        if ($prefix !== '/') {
+            return true;
+        }
+
+        $server = phpversion('true_async_server');
+
+        if ($server !== false
+            && version_compare($server, self::ROOT_MOUNT_MINIMUM_SERVER, '>=')) {
+            return true;
+        }
+
+        fwrite(STDERR, sprintf(
+            "async: skipping the static mount at \"/\" — it needs true_async_server %s, this build is %s\n",
+            self::ROOT_MOUNT_MINIMUM_SERVER,
+            $server === false ? 'absent' : $server
+        ));
+
+        return false;
+    }
+
     private function registerStaticHandlers(HttpServer $server): void
     {
         foreach ($this->options['static_handlers'] ?? [] as $sh) {
             $prefix = $sh['prefix'] ?? '/static/';
             $root   = $sh['root'] ?? '/data/static';
 
-            if (!is_dir($root)) {
+            if (!is_dir($root) || !$this->rootMountIsServable($prefix)) {
                 continue;
             }
 
@@ -257,6 +286,10 @@ class TrueAsyncServer implements ServerInterface
 
             if (!empty($sh['etag'])) {
                 $handler->setEtagEnabled(true);
+            }
+
+            if (!empty($sh['hide'])) {
+                $handler->hide(...$sh['hide']);
             }
 
             if (isset($sh['open_file_cache'])) {
@@ -392,7 +425,7 @@ class TrueAsyncServer implements ServerInterface
             } catch (\Throwable $e) {
                 fwrite(STDERR, "\n!!! GRPC HANDLER ERROR ({$path}) !!!\n{$e}\n");
 
-                if (!$taResponse->isClosed()) {
+                if (!$taResponse->isEnded()) {
                     $taResponse->setTrailer('grpc-status', '13'); // INTERNAL
                     $taResponse->setTrailer('grpc-message', $e->getMessage());
                 }
@@ -407,10 +440,10 @@ class TrueAsyncServer implements ServerInterface
     {
         // Already streamed and closed directly (Sse::end(), or any other code
         // that wrote to trueasync_response() itself) — nothing left to send.
-        /* send() leaves the response open with its setters sealed, so closed alone is not the
+        /* write() leaves the response open with its setters sealed, so ended alone is not the
          * whole test. sendFile() seals it while raising neither flag and there is nothing to
          * ask, which is why the first setter doubles as the probe. */
-        if ($taResponse->isClosed() || $taResponse->isHeadersSent()) {
+        if ($taResponse->isEnded() || $taResponse->isHeadersSent()) {
             return;
         }
 
@@ -489,7 +522,7 @@ class TrueAsyncServer implements ServerInterface
             }
 
             try {
-                $taResponse->send($chunk);
+                $taResponse->write($chunk);
             } catch (\Throwable) {
                 $peerGone = true;
             }
