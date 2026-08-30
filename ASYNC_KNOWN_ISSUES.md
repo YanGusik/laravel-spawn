@@ -240,16 +240,6 @@ visibly; where none is named, nothing will notice the change but a reader.
    a route behind the plain `throttle` alias (which this package fixes) rather than the Redis
    middleware, and keep a limit in front of the application — nginx `limit_req` or a WAF.
 
-14. **A pooled phpredis client freed at engine shutdown segfaults.** The crash is in
-   `redis_pool_destroy()` calling `zend_async_pool_close()` from `free_redis_object()`, reached
-   from `shutdown_executor()` — the async runtime is already gone by then, and the pool walks it
-   anyway. It costs nothing while a worker is up, because a client is freed inside the request
-   that made it; it shows up when a process ends holding one, which is what a test run does.
-   `RedisPoolTest` collects its clients in `tearDown()` for that reason, and without it the
-   whole suite ends in a core dump after reporting every test as passed — the exit code is 139
-   and the summary line says OK, so a CI job reads as failed with nothing in the output to say
-   why. Owned by the extension pair rather than by this package.
-
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`
