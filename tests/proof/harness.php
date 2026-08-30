@@ -60,7 +60,12 @@ function proof_run_concurrently(array $requests): array
 }
 
 /**
- * Run the closures one after another, in the same coroutine.
+ * Run the closures one after another, each in a scope of its own — a worker serving one
+ * request, finishing it, and serving the next.
+ *
+ * Each gets its own scope for the same reason the concurrent runner gives one: a fix that
+ * moves state into the request's context would otherwise look broken here, because two
+ * closures called in one coroutine are one request as far as any such context is concerned.
  *
  * @param  array<array-key, callable>  $requests
  * @return array<array-key, mixed>
@@ -70,7 +75,7 @@ function proof_run_sequentially(array $requests): array
     $results = [];
 
     foreach ($requests as $key => $fn) {
-        $results[$key] = $fn();
+        $results += proof_run_concurrently([$key => $fn]);
     }
 
     return $results;

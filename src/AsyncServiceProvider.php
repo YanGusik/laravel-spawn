@@ -29,6 +29,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerViewAdapter();
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
+        $this->registerLogAdapter();
         $this->registerTelescopeAdapter();
 
         // One object per worker; the server it reports for is thread-local to that worker.
@@ -400,6 +401,24 @@ class AsyncServiceProvider extends ServiceProvider
             \Illuminate\Log\Context\Repository::class,
             fn ($fresh, $prototype) => $fresh->add($prototype->all())->addHidden($prototype->allHidden()),
         );
+    }
+
+    /**
+     * One LogManager per worker, whose channels tag each request's lines with that request's
+     * context alone.
+     *
+     * LogServiceProvider is registered from Application::__construct and is not deferred, so
+     * a plain singleton() here replaces its binding for good. The channels stay memoised —
+     * a per-request manager would open the log file once per request — and only the context
+     * moves, which is the half a request writes.
+     */
+    private function registerLogAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->singleton('log', fn ($app) => new \Spawn\Laravel\Log\AsyncLogManager($app));
     }
 
     private function registerViteAdapter(): void

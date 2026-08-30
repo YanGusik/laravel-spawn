@@ -103,17 +103,15 @@ $concurrent = proof_run_concurrently([
 $run->control('A tagged its own line, concurrent', $concurrent['a'], ['request_id' => 'A']);
 $run->isolation('B\'s line, concurrent', $concurrent['b'], []);
 
-/* The control that names the cause and the remedy at once: drop the resolved manager
- * between the two requests, and B builds a Logger with a context of its own. */
+/* The control that keeps this script honest: on Laravel's own LogManager the tag crosses,
+ * so a run where B's line comes back clean is the adapter's doing and not the scenario's.
+ * The day this stops crossing upstream, the control fails and says so. */
 $app = $boot->worker();
-$withReset = proof_run_sequentially([
+$app->instance('log', new LogManager($app));
+$onStock = proof_run_sequentially([
     'a' => static fn () => $taggingRequest($app),
-    'b' => static function () use ($app, $plainRequest) {
-        $app->forgetInstance('log');
-
-        return $plainRequest($app);
-    },
+    'b' => static fn () => $plainRequest($app),
 ]);
-$run->control('with the log binding reset between requests', $withReset['b'], []);
+$run->control('on Laravel\'s own LogManager the tag crosses', $onStock['b'], ['request_id' => 'A']);
 
 exit($run->exitCode());
