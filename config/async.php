@@ -35,6 +35,24 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Atomic Throttling
+    |--------------------------------------------------------------------------
+    |
+    | Laravel's `throttle` middleware reads the counter and raises it in two
+    | calls, and every request whose read lands before the first write is
+    | admitted. One worker serves as many coroutines as arrive, so a burst
+    | against `throttle:5,1` is admitted in full rather than five at a time.
+    | With this on, the middleware charges first and decides on what `hit()`
+    | returns, which leaves no window; the rejected request pays for its
+    | attempt, and nothing else about the response changes. Turn it off to run
+    | Laravel's own middleware.
+    |
+    */
+
+    'atomic_throttle' => true,
+
+    /*
+    |--------------------------------------------------------------------------
     | Database Connection Pool
     |--------------------------------------------------------------------------
     |

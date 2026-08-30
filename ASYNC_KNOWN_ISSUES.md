@@ -225,6 +225,21 @@ visibly; where none is named, nothing will notice the change but a reader.
    would take a Laravel file that has moved, which no fixture can stand in for, so the group a
    release breaks is found by the drift job rather than by a test here.
 
+13. **Two throttling windows are left open, and both are Laravel's.** `AtomicThrottleRequests`
+   answers the `throttle` alias and charges before it decides, so the ordinary limit holds
+   whatever arrives at once. A limit declared with an `afterCallback` — `Limit::perMinute(5)`
+   with a callback deciding from the response — is charged after the response by design, so
+   its pre-check is the only guard it has and the window between check and charge stays.
+   `ThrottleRequestsWithRedis`, which an application wires up by hand, asks a read-only Lua
+   script and then calls `acquire()`, throwing away the atomic verdict that call returns
+   (`ThrottleRequestsWithRedis.php:99,120`); the window is one round trip wide rather than a
+   whole request, and it is there. Read from the source, not measured. An OTP, login or
+   payment route is where that difference is a security boundary rather than a comfort: a
+   six-digit code behind a limit of five a minute takes about 3300 hours to walk at the
+   limit, and a hundredth of that at a hundred a minute. Until upstream closes them, put such
+   a route behind the plain `throttle` alias (which this package fixes) rather than the Redis
+   middleware, and keep a limit in front of the application — nginx `limit_req` or a WAF.
+
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`

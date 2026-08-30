@@ -31,6 +31,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerLogContextAdapter();
         $this->registerLogAdapter();
         $this->registerHttpClientAdapter();
+        $this->registerThrottleAdapter();
         $this->registerTelescopeAdapter();
 
         // One object per worker; the server it reports for is thread-local to that worker.
@@ -440,6 +441,29 @@ class AsyncServiceProvider extends ServiceProvider
         $this->app->singleton(
             \Illuminate\Http\Client\Factory::class,
             fn ($app) => new \Spawn\Laravel\Http\Client\AsyncHttpFactory($app['events']),
+        );
+    }
+
+    /**
+     * Answer the `throttle` middleware with the one that charges before it decides.
+     *
+     * The alias resolves the framework class through the container, so a binding here
+     * reaches every route that names `throttle`, and an application that binds its own
+     * throttle keeps it — the container answers the last binding.
+     */
+    private function registerThrottleAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        if (! $this->app->make('config')->get('async.atomic_throttle', true)) {
+            return;
+        }
+
+        $this->app->bind(
+            \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            \Spawn\Laravel\Http\Middleware\AtomicThrottleRequests::class,
         );
     }
 

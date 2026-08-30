@@ -69,11 +69,24 @@ listed rather than adapted, and the fixes are open. The first three carry a repr
 
 The rate limiter belongs to no row above, because nothing of a request is kept on the shared
 object. `RateLimiter::tooManyAttempts()` reads the counter and `hit()` raises it, with nothing
-atomic spanning the two, so callers whose read lands before the first write are all admitted
-and a limit of N admits more. The window is between two calls into the store and no store
-closes it: two FPM workers sharing one Redis overshoot exactly as two coroutines do, and what
-concurrency sets is how many callers get in, not whether they can. `tests/proof/prove_rate_limiter.php`
-shows both, and the hand-interleaved run in it needs no coroutines at all.
+atomic spanning the two, so callers whose read lands before the first write are all admitted.
+The window is Laravel's and no store closes it — it lies between two calls into the store —
+but what concurrency sets is how many callers fit inside it: under php-fpm the worker count,
+here whatever arrives together. Measured against `throttle:5,1` on a store costing one
+millisecond a call: a burst of 10 admitted 10 and a burst of 500 admitted 500, while the same
+100 requests spaced a millisecond apart admitted 8.
+
+[`AtomicThrottleRequests`](src/Http/Middleware/AtomicThrottleRequests.php) answers the
+`throttle` alias in async mode and charges before it decides: `hit()` returns the count after
+raising it and is atomic in itself, so one call replaces the pair. The rejected request pays
+for its attempt, which upstream does not charge it; the decay window is not extended by that,
+and the headers are identical. Turn it off with `async.atomic_throttle => false`.
+
+Two windows are left, both narrower and neither closed. A limit declared with an
+`afterCallback` is charged after the response, so its pre-check is all there is. And
+`ThrottleRequestsWithRedis`, which an application wires up by hand, throws away the verdict
+its own atomic script returns (`ThrottleRequestsWithRedis.php:99,120`) and re-asks in a second
+call — read from the source, not measured here.
 
 ---
 
