@@ -292,9 +292,14 @@ See [`AsyncTranslator`](src/Translation/AsyncTranslator.php) for a minimal examp
 
 ---
 
-## PHPStan Rule
+## PHPStan Rules
 
 [`MutableStaticPropertyRule`](src/PHPStan/MutableStaticPropertyRule.php) scans for mutable static properties — the #1 source of coroutine state leaks.
+
+[`UnscopedGuardSwitchRule`](src/PHPStan/UnscopedGuardSwitchRule.php) reports `Model::unguard()`
+and `Model::reguard()`. The scoped `Model::unguarded(callable)` is held per coroutine here; the
+pair has no callback to close and writes the class static on purpose, which is what a seeder
+and a service provider mean and what request-handling code must not do.
 
 ```bash
 # Scan a vendor package
