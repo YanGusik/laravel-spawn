@@ -20,6 +20,11 @@ use function Async\coroutine_context;
  * service provider or a seeder, and they keep writing the static. A coroutine that opened no
  * window of its own therefore sees whatever the process decided.
  *
+ * A coroutine spawned inside the window does not inherit it: the context is the opener's own,
+ * and neither `Async\spawn()` nor `Scope::inherit()` reads it. A parallel bulk import written
+ * as `Model::unguarded(fn () => await(all(...)))` therefore fills its rows guarded, and drops
+ * or refuses the attributes the guard covers. Open a window inside each child that needs one.
+ *
  * The copy of `Concerns\GuardsAttributes` under `overrides/` is the only caller.
  */
 final class GuardWindow
@@ -42,6 +47,10 @@ final class GuardWindow
         try {
             return $callback();
         } finally {
+            // Restoring writes the previous value back rather than removing the entry, so a
+            // null previous leaves a null entry. Every read here is findLocal(), which answers
+            // null either way; a read through find() would see the null entry shadow a value
+            // of an enclosing scope.
             $context->set(self::KEY, $previous, true);
         }
     }

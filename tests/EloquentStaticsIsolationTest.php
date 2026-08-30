@@ -3,8 +3,11 @@
 namespace Spawn\Laravel\Tests;
 
 use Illuminate\Container\Container;
+use Illuminate\Database\Capsule\Manager as Capsule;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Schema\Blueprint;
 use Illuminate\Events\Dispatcher;
+use Spawn\Laravel\Tests\Fixtures\GuardedRow;
 use stdClass;
 
 use function Async\suspend;
@@ -35,10 +38,22 @@ class EloquentStaticsIsolationTest extends AsyncTestCase
 
         Model::reguard();
         Model::unsetEventDispatcher();
+
+        $capsule = new Capsule();
+        $capsule->addConnection(['driver' => 'sqlite', 'database' => ':memory:']);
+        $capsule->setAsGlobal();
+        $capsule->bootEloquent();
+
+        Capsule::schema()->create('guarded_rows', function (Blueprint $table) {
+            $table->increments('id');
+            $table->string('name')->nullable();
+            $table->integer('admin')->nullable();
+        });
     }
 
     protected function tearDown(): void
     {
+        GuardedRow::flushEventListeners();
         Model::reguard();
         Model::unsetEventDispatcher();
 
@@ -120,6 +135,57 @@ class EloquentStaticsIsolationTest extends AsyncTestCase
         });
 
         $this->assertSame([], $delivered);
+    }
+
+    /**
+     * The event path a request actually takes: a save fires `creating` through the static
+     * dispatcher, which is what an observer of an application hangs on.
+     */
+    public function test_a_sibling_still_fires_its_model_events_on_a_save(): void
+    {
+        $created = [];
+        Model::setEventDispatcher(new Dispatcher(new Container()));
+        GuardedRow::creating(static function ($row) use (&$created) {
+            $created[] = $row->name;
+        });
+
+        $this->insideAForeignWindow(
+            static fn () => Model::withoutEvents(...),
+            ['sibling' => static fn () => GuardedRow::create(['name' => 'sibling'])->exists],
+        );
+
+        $this->assertSame(['sibling'], $created, 'the sibling\'s observers must still run');
+    }
+
+    public function test_the_coroutine_inside_without_events_saves_quietly(): void
+    {
+        $created = [];
+        Model::setEventDispatcher(new Dispatcher(new Container()));
+        GuardedRow::creating(static function ($row) use (&$created) {
+            $created[] = $row->name;
+        });
+
+        $saved = Model::withoutEvents(static function () {
+            suspend();
+
+            return GuardedRow::create(['name' => 'quiet'])->exists;
+        });
+
+        $this->assertTrue($saved, 'the row is written; only the event is dropped');
+        $this->assertSame([], $created);
+    }
+
+    /**
+     * A coroutine spawned inside a window is outside it, which is what a context-local window
+     * means. The case is here so that the day it changes, it changes on purpose.
+     */
+    public function test_a_child_coroutine_does_not_inherit_the_window(): void
+    {
+        $inside = Model::unguarded(static fn () => \Async\await(\Async\spawn(
+            static fn () => Model::isUnguarded()
+        )));
+
+        $this->assertFalse($inside, 'the window belongs to the coroutine that opened it');
     }
 
     /**

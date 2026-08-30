@@ -191,30 +191,40 @@ visibly; where none is named, nothing will notice the change but a reader.
    one shared handle to every coroutine. Persistent connections are not supported under
    async serving in the first place: one connection shared across coroutines is the
    defect the pool exists to prevent.
-12. **Two Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/` holds
-   `Relations\Relation` and `Concerns\HasRelationships` with one edit each, and
-   `EloquentOverrides` puts them in front of Laravel's through Composer's class map. Neither
-   works without the other: a `Relation` that no longer switches the flag off, next to Laravel's
-   own relation classes, would have eager loading add a `where` on a key that is not there yet.
+12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/` holds
+   `Relations\Relation`, `Concerns\HasRelationships`, `Concerns\GuardsAttributes` and
+   `Concerns\HasEvents`, and `EloquentOverrides` puts them in front of Laravel's through
+   Composer's class map. They form three groups, installed independently of each other: the
+   two relation files, which need each other — a `Relation` that no longer switches the flag
+   off, next to Laravel's own relation classes, would have eager loading add a `where` on a key
+   that is not there yet — and then the mass-assignment window and the model-event dispatcher,
+   one file each. A release that moves one group leaves the other two installed.
    Each copy carries the checksum of the file it was taken from. A Laravel release that touches
-   either one leaves the application on Laravel's classes — with the defect — rather than on a
-   copy that has quietly fallen behind; the worker writes the reason to stderr at start-up and
+   one leaves the application on Laravel's class for that group — with the defect — rather than
+   on a copy that has quietly fallen behind; `src/bootstrap.php` raises an `E_USER_WARNING`
+   naming the group and the reason, the worker writes the same to stderr at start-up, and
    `test_the_copies_still_match_the_laravel_files_behind_them` fails, which is where the copies
-   are meant to be brought forward by hand — `php bin/refresh-eloquent-overrides.php` re-copies
-   both files, re-applies the edits and prints the new checksums. Only Laravel 13.26.1 is
-   copied, and `composer.json` requires `~13.26.1` so that an untested release is refused at
-   install rather than silently falling back. The churn is real rather than theoretical:
-   `Relation` gained `withConstraints()` and a second flag between 13.2.0 and 13.26.1, and the
-   CI of this branch went red on exactly that. The `Laravel drift` workflow installs the newest
-   Laravel 13 every night, so a release that moves past the copies is found here first.
+   are meant to be brought forward — `php bin/refresh-eloquent-overrides.php` re-copies every
+   file, re-applies the edits and prints the new checksums. Only Laravel 13.26.1 is copied, and
+   `composer.json` requires `~13.26.1` so that an untested release is refused at install rather
+   than silently falling back. The churn is real rather than theoretical: `Relation` gained
+   `withConstraints()` and a second flag between 13.2.0 and 13.26.1, and the CI of this branch
+   went red on exactly that. The `Laravel drift` workflow installs the newest Laravel 13 every
+   night, so a release that moves past the copies is found here first.
    Three things the copies do not reach. A coroutine spawned **inside** a window does not inherit
    it — the window lives in the opener's own context — so a relation built there is constrained
-   where the opener wanted it bare. A package shipping its own `Relation` subclass with its own
-   `addConstraints()` reads the shared property, which is now permanently true, and adds
-   constraints during an eager load. And `opcache.preload` declaring either class before Composer
-   includes `src/bootstrap.php` leaves the application on Laravel's own.
-   `tests/EloquentOverridesTest.php` pins the behaviour; six of its cases fail with
-   `SPAWN_ELOQUENT_OVERRIDES=0`.
+   where the opener wanted it bare, a model filled there is filled guarded, and a model event
+   fired there is delivered where the opener asked for silence. A package shipping its own
+   `Relation` subclass with its own `addConstraints()` reads the shared property, which is now
+   permanently true, and adds constraints during an eager load. And `opcache.preload` declaring
+   any of the four classes before Composer includes `src/bootstrap.php` leaves the application
+   on Laravel's own.
+   `tests/EloquentOverridesTest.php` and `tests/EloquentStaticsIsolationTest.php` pin the
+   behaviour; six cases of the first and five of the second fail with
+   `SPAWN_ELOQUENT_OVERRIDES=0`. Nothing pins the independence of the groups themselves: it
+   would take a Laravel file that has moved, which no fixture can stand in for, so the group a
+   release breaks is found by the drift job rather than by a test here.
+
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`

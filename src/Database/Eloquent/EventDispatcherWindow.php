@@ -19,6 +19,11 @@ use function Async\coroutine_context;
  * The window is read on top of the static: `Model::setEventDispatcher()` is how bootstrap
  * gives the whole worker its dispatcher, and it keeps writing the static.
  *
+ * A coroutine spawned inside the window does not inherit it: the context is the opener's own,
+ * and neither `Async\spawn()` nor `Scope::inherit()` reads it. Model events fired from such a
+ * child are delivered, so a seeder that spawns its work loses the silence it asked for — mails,
+ * broadcasts and audit rows go out. Open a window inside each child that needs one.
+ *
  * The copy of `Concerns\HasEvents` under `overrides/` is the only caller.
  */
 final class EventDispatcherWindow
@@ -39,6 +44,10 @@ final class EventDispatcherWindow
         try {
             return $callback();
         } finally {
+            // Restoring writes the previous value back rather than removing the entry, so a
+            // null previous leaves a null entry. Every read here is findLocal(), which answers
+            // null either way; a read through find() would see the null entry shadow a value
+            // of an enclosing scope.
             $context->set(self::KEY, $previous, true);
         }
     }

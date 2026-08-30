@@ -30,27 +30,42 @@ const PROBE_MS = 15;
 
 $run = new ProofRun();
 
-/* Request A: an ordinary unguarded bulk import that awaits anything at all. */
-$unguardedWriter = static fn () => Model::unguarded(static function () {
-    delay(HOLD_MS);
+/* Whether A is between the opening and the closing of its window right now. B records it
+ * along with its own reading, so a run whose delays failed to overlap is inconclusive rather
+ * than a quiet "isolation held". */
+$aIsInside = false;
 
-    return 'imported';
-});
+/* Request A: an ordinary unguarded bulk import that awaits anything at all. */
+$unguardedWriter = static function () use (&$aIsInside) {
+    return Model::unguarded(static function () use (&$aIsInside) {
+        $aIsInside = true;
+
+        try {
+            delay(HOLD_MS);
+
+            return 'imported';
+        } finally {
+            $aIsInside = false;
+        }
+    });
+};
 
 /* Request B: touches neither guard nor dispatcher and only reports what it sees. */
-$guardObserver = static function () {
+$guardObserver = static function () use (&$aIsInside) {
     delay(PROBE_MS);
 
-    return Model::isUnguarded();
+    return ['inside A' => $aIsInside, 'unguarded' => Model::isUnguarded()];
 };
 
 $sequential = proof_run_sequentially(['a' => $unguardedWriter, 'b' => $guardObserver]);
 $run->control('unguarded: A completed, sequential', $sequential['a'], 'imported');
-$run->control('unguarded: B outside A\'s window', $sequential['b'], false);
+$run->control('unguarded: B ran outside A\'s window', $sequential['b']['inside A'], false);
+$run->control('unguarded: B, sequential', $sequential['b']['unguarded'], false);
 
 $concurrent = proof_run_concurrently(['a' => $unguardedWriter, 'b' => $guardObserver]);
 $run->control('unguarded: A completed, concurrent', $concurrent['a'], 'imported');
-$run->isolation('unguarded: B inside A\'s window', $concurrent['b'], false);
+$run->control('unguarded: B ran inside A\'s window', $concurrent['b']['inside A'], true);
+$run->isolation('unguarded: B, concurrent', $concurrent['b']['unguarded'], false);
 
 /* The dispatcher is reachable from the container in a real application; here it is
  * set directly, because what leaks is the static Model holds, not how it got there. */
@@ -61,28 +76,39 @@ $dispatcher->listen('probe', static function () use (&$delivered) {
 });
 Model::setEventDispatcher($dispatcher);
 
-$silentWriter = static fn () => Model::withoutEvents(static function () {
-    delay(HOLD_MS);
+$silentWriter = static function () use (&$aIsInside) {
+    return Model::withoutEvents(static function () use (&$aIsInside) {
+        $aIsInside = true;
 
-    return 'saved quietly';
-});
+        try {
+            delay(HOLD_MS);
+
+            return 'saved quietly';
+        } finally {
+            $aIsInside = false;
+        }
+    });
+};
 
 /* Every model event goes through the static dispatcher the same way, so asking it to
  * deliver one is the observation a save() would make from inside fireModelEvent(). */
-$eventObserver = static function () use (&$delivered) {
+$eventObserver = static function () use (&$delivered, &$aIsInside) {
     delay(PROBE_MS);
     $delivered = [];
+    $inside = $aIsInside;
     Model::getEventDispatcher()->dispatch('probe');
 
-    return $delivered;
+    return ['inside A' => $inside, 'delivered' => $delivered];
 };
 
 $sequential = proof_run_sequentially(['a' => $silentWriter, 'b' => $eventObserver]);
 $run->control('events: A completed, sequential', $sequential['a'], 'saved quietly');
-$run->control('events: B outside A\'s window', $sequential['b'], ['probe']);
+$run->control('events: B ran outside A\'s window', $sequential['b']['inside A'], false);
+$run->control('events: B, sequential', $sequential['b']['delivered'], ['probe']);
 
 $concurrent = proof_run_concurrently(['a' => $silentWriter, 'b' => $eventObserver]);
 $run->control('events: A completed, concurrent', $concurrent['a'], 'saved quietly');
-$run->isolation('events: B inside A\'s window', $concurrent['b'], ['probe']);
+$run->control('events: B ran inside A\'s window', $concurrent['b']['inside A'], true);
+$run->isolation('events: B, concurrent', $concurrent['b']['delivered'], ['probe']);
 
 exit($run->exitCode());

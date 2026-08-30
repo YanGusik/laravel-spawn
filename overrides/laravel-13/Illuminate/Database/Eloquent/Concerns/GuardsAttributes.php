@@ -107,7 +107,7 @@ trait GuardsAttributes
      */
     public function getGuarded()
     {
-        return self::$unguarded === true
+        return static::isUnguarded() === true
             ? []
             : $this->guarded;
     }

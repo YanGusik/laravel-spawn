@@ -51,11 +51,13 @@ $fakingRequest = static function () {
     return Http::get('https://example.invalid/a')->body();
 };
 
-/* Request B installs nothing. Anything that stops it — an unresolvable host, a factory
- * that will not build — leaves the marker absent, which reads as isolation held. */
+/* Request B installs no stub of its own, and refuses to leave the process: with the stray
+ * guard on, a request no stub answers throws at once instead of waiting out a DNS timeout.
+ * Anything else that stops it — a factory that will not build — leaves the marker absent as
+ * well, which reads as isolation held rather than as a crossing. */
 $plainRequest = static function () {
     try {
-        return Http::get('https://example.invalid/b')->body();
+        return Http::preventStrayRequests()->get('https://example.invalid/b')->body();
     } catch (\Throwable $e) {
         return 'no stub answered';
     }

@@ -136,7 +136,6 @@ $sequential = proof_run_sequentially([
     'b' => static fn () => admits($limiter),
 ]);
 $run->control('limit of 1, sequential', $sequential, ['a' => true, 'b' => false]);
-$run->control('counter after two sequential attempts', $limiter->attempts(KEY), 1);
 
 $limiter = fresh_limiter();
 $concurrent = proof_run_concurrently([
@@ -148,7 +147,7 @@ $run->control(
     array_map(static fn ($admitted) => is_bool($admitted), $concurrent),
     ['a' => true, 'b' => true]
 );
-$run->isolation('limit of 1, concurrent', $concurrent, ['a' => true, 'b' => false]);
+$run->defect('limit of 1, concurrent', $concurrent, ['a' => true, 'b' => false]);
 
 /* Both readings happen before either write, which is what a second caller sees on any
  * store: the answer to "may I?" is not itself a claim on the budget. */

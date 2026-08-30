@@ -36,16 +36,25 @@ const PROBE_CHANNEL = [
 ];
 
 /**
- * The context Monolog recorded on the last line of the given manager's channel.
+ * The context Monolog recorded on the line carrying the given message.
+ *
+ * Both requests write into the handler of the shared channel, so a reader that took the last
+ * record would report one request's context as the other's the moment a suspension lands
+ * between the two writes.
  *
  * @return array<string, mixed>
  */
-function last_line_context(LogManager $log): array
+function line_context(LogManager $log, string $message): array
 {
     $handler = $log->channel('probe')->getLogger()->getHandlers()[0];
-    $records = $handler->getRecords();
 
-    return end($records)->context;
+    foreach (array_reverse($handler->getRecords()) as $record) {
+        if ($record->message === $message) {
+            return $record->context;
+        }
+    }
+
+    return ['no line said' => $message];
 }
 
 $boot = new class {
@@ -68,14 +77,14 @@ $taggingRequest = static function (AsyncApplication $app) {
     $app->make('log')->withContext(['request_id' => 'A']);
     $app->make('log')->info('a');
 
-    return last_line_context($app->make('log'));
+    return line_context($app->make('log'), 'a');
 };
 
 /* Request B logs one line and expects it to carry nothing it did not put there. */
 $plainRequest = static function (AsyncApplication $app) {
     $app->make('log')->info('b');
 
-    return last_line_context($app->make('log'));
+    return line_context($app->make('log'), 'b');
 };
 
 $app = $boot->worker();

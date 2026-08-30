@@ -65,8 +65,15 @@ listed rather than adapted, and the fixes are open. The first three carry a repr
 |---|---|---|
 | **Log** | `LogManager::$channels` memoises one `Logger` per channel; `LogManager::$sharedContext` | `Log::withContext(['request_id' => …])` tags every other request's lines |
 | **HTTP Client** | `Illuminate\Http\Client\Factory`, a worker singleton | `Http::fake()`, `preventStrayRequests()`, global middleware |
-| **Cache** | `CacheManager::$stores` | Nothing per request, but `RateLimiter::tooManyAttempts()` and `hit()` are two calls with no atomicity between them, so a limit of N admits more under concurrency. The window is Laravel's and no store closes it |
 | **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()` and `alwaysFrom()` write to the memoised mailer. Not reproduced |
+
+The rate limiter belongs to no row above, because nothing of a request is kept on the shared
+object. `RateLimiter::tooManyAttempts()` reads the counter and `hit()` raises it, with nothing
+atomic spanning the two, so callers whose read lands before the first write are all admitted
+and a limit of N admits more. The window is between two calls into the store and no store
+closes it: two FPM workers sharing one Redis overshoot exactly as two coroutines do, and what
+concurrency sets is how many callers get in, not whether they can. `tests/proof/prove_rate_limiter.php`
+shows both, and the hand-interleaved run in it needs no coroutines at all.
 
 ---
 

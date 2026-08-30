@@ -10,7 +10,7 @@
  * run inconclusive rather than positive — without that split a script that executes
  * nothing at all exits the same way as one that caught the defect.
  *
- * Exit codes: 0 isolation held, 1 a defect reproduced, 2 inconclusive.
+ * Exit codes: 0 nothing reproduced, 1 a defect reproduced, 2 inconclusive.
  */
 
 use Async\Scope;
@@ -95,6 +95,18 @@ final class ProofRun
     {
         if (! $this->report('control', $label, $actual === $expected, $actual, $this->render($expected))) {
             $this->fixtureBroken = true;
+        }
+    }
+
+    /**
+     * A reading whose wrong answer is a defect of something other than isolation — a race in
+     * the framework, an absent reset. Separated from isolation() so that the output does not
+     * invite the reader to blame concurrency for a check-then-act written years ago.
+     */
+    public function defect(string $label, mixed $actual, mixed $expected): void
+    {
+        if (! $this->report('defect', $label, $actual === $expected, $actual, $this->render($expected))) {
+            $this->defectSeen = true;
         }
     }
 
