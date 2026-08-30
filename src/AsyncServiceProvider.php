@@ -30,6 +30,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
         $this->registerLogAdapter();
+        $this->registerHttpClientAdapter();
         $this->registerTelescopeAdapter();
 
         // One object per worker; the server it reports for is thread-local to that worker.
@@ -419,6 +420,27 @@ class AsyncServiceProvider extends ServiceProvider
         }
 
         $this->app->singleton('log', fn ($app) => new \Spawn\Laravel\Log\AsyncLogManager($app));
+    }
+
+    /**
+     * One HTTP client factory per worker, whose stubs and recordings belong to the request
+     * that installed them.
+     *
+     * Laravel registers no binding for the factory, and AsyncApplication::shareFacadeRoots()
+     * makes one so that global middleware survives facade caching being off. Binding it here
+     * decides which class that singleton is; shareFacadeRoots() leaves an alias the container
+     * already knows alone.
+     */
+    private function registerHttpClientAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->singleton(
+            \Illuminate\Http\Client\Factory::class,
+            fn ($app) => new \Spawn\Laravel\Http\Client\AsyncHttpFactory($app['events']),
+        );
     }
 
     private function registerViteAdapter(): void

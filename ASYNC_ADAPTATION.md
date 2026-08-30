@@ -32,6 +32,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **URL** | `scopedSingleton` (in `AsyncServiceProvider`), cloned from the boot-time generator | The generator's request, cached root and scheme; the response factory's redirector |
 | **Vite** | `scopedSingleton` (in `AsyncServiceProvider`) | CSP nonce and preloaded assets |
 | **Terminating callbacks** | `AsyncApplication::terminating()` | The callbacks a request registers, run at its end and dropped with it |
+| **HTTP Client** | [`AsyncHttpFactory`](src/Http/Client/AsyncHttpFactory.php) — one factory, per-request stub state | `Http::fake()`, recorded requests, response sequences, `preventStrayRequests()`. Global middleware and options stay worker-wide |
 | **Log** | [`AsyncLogManager`](src/Log/AsyncLogManager.php) building [`AsyncLogger`](src/Log/AsyncLogger.php) channels | `Log::withContext()` tags, per request. Channels stay memoised, and `Log::shareContext()` stays process-wide |
 | **Eloquent statics** | copies of `Concerns\GuardsAttributes` and `Concerns\HasEvents` (in [`EloquentOverrides`](src/Database/Eloquent/EloquentOverrides.php)) | The window `Model::unguarded()` opens and the dispatcher `Model::withoutEvents()` installs. `Model::unguard()` and `Model::setEventDispatcher()` stay process-wide |
 
@@ -64,7 +65,6 @@ listed rather than adapted, and the fixes are open. The first three carry a repr
 
 | Component | The object | What crosses |
 |---|---|---|
-| **HTTP Client** | `Illuminate\Http\Client\Factory`, a worker singleton | `Http::fake()`, `preventStrayRequests()`, global middleware |
 | **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()` and `alwaysFrom()` write to the memoised mailer. Not reproduced |
 
 The rate limiter belongs to no row above, because nothing of a request is kept on the shared

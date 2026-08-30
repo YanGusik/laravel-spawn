@@ -75,16 +75,16 @@ $concurrent = proof_run_concurrently(['a' => $fakingRequest, 'b' => $plainReques
 $run->control('A is answered by its own stub, concurrent', $concurrent['a'], STUBBED_BY_A);
 $run->isolationDiffers('what answered B, concurrent', $concurrent['b'], STUBBED_BY_A);
 
-/* Both roots are held until the comparison is made: PHP reuses the id of a destroyed
- * object, so ids compared after the objects are gone would say "same" of two that never
- * overlapped. */
+/* One factory for the worker is the intended arrangement, not the defect: global middleware
+ * and global options are set once at boot and have to survive. Both roots are held until the
+ * comparison is made, because PHP reuses the id of a destroyed object. */
 $boot->worker();
 $roots = proof_run_concurrently([
     'a' => static fn () => Http::getFacadeRoot(),
     'b' => static fn () => Http::getFacadeRoot(),
 ]);
 $run->control('B resolved a factory at all', $roots['b'] instanceof Factory, true);
-$run->isolation('A and B share one factory', $roots['a'] === $roots['b'], false);
+$run->control('one factory for the worker', $roots['a'] === $roots['b'], true);
 
 /* The control that names the cause: with a factory each, the same fake stays home. */
 $ownFactory = static function (string $tag) {
