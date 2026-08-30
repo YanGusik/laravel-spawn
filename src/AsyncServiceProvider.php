@@ -29,6 +29,9 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerViewAdapter();
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
+        $this->registerLogAdapter();
+        $this->registerHttpClientAdapter();
+        $this->registerThrottleAdapter();
         $this->registerTelescopeAdapter();
 
         // One object per worker; the server it reports for is thread-local to that worker.
@@ -399,6 +402,64 @@ class AsyncServiceProvider extends ServiceProvider
         $this->app->scopedSeeder(
             \Illuminate\Log\Context\Repository::class,
             fn ($fresh, $prototype) => $fresh->add($prototype->all())->addHidden($prototype->allHidden()),
+        );
+    }
+
+    /**
+     * LogServiceProvider is registered from Application::__construct and is not deferred, so
+     * a plain singleton() here replaces its binding for good — no extend() dance of the kind
+     * the translator needs. What the replacement changes is in {@see AsyncLogManager}.
+     */
+    private function registerLogAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->singleton('log', fn ($app) => new \Spawn\Laravel\Log\AsyncLogManager($app));
+    }
+
+    /**
+     * One HTTP client factory per worker, whose stubs and recordings belong to the request
+     * that installed them.
+     *
+     * Laravel registers no binding for the factory, and AsyncApplication::shareFacadeRoots()
+     * makes one so that global middleware survives facade caching being off. Binding it here
+     * decides which class that singleton is; shareFacadeRoots() leaves an alias the container
+     * already knows alone.
+     */
+    private function registerHttpClientAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->singleton(
+            \Illuminate\Http\Client\Factory::class,
+            fn ($app) => new \Spawn\Laravel\Http\Client\AsyncHttpFactory($app['events']),
+        );
+    }
+
+    /**
+     * Answer the `throttle` middleware with the one that charges before it decides.
+     *
+     * The alias resolves the framework class through the container, so a binding here
+     * reaches every route that names `throttle`, and an application that binds its own
+     * throttle keeps it — the container answers the last binding.
+     */
+    private function registerThrottleAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        if (! $this->app->make('config')->get('async.atomic_throttle', true)) {
+            return;
+        }
+
+        $this->app->bind(
+            \Illuminate\Routing\Middleware\ThrottleRequests::class,
+            \Spawn\Laravel\Http\Middleware\AtomicThrottleRequests::class,
         );
     }
 

@@ -191,30 +191,65 @@ visibly; where none is named, nothing will notice the change but a reader.
    one shared handle to every coroutine. Persistent connections are not supported under
    async serving in the first place: one connection shared across coroutines is the
    defect the pool exists to prevent.
-12. **Two Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/` holds
-   `Relations\Relation` and `Concerns\HasRelationships` with one edit each, and
-   `EloquentOverrides` puts them in front of Laravel's through Composer's class map. Neither
-   works without the other: a `Relation` that no longer switches the flag off, next to Laravel's
-   own relation classes, would have eager loading add a `where` on a key that is not there yet.
+12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/` holds
+   `Relations\Relation`, `Concerns\HasRelationships`, `Concerns\GuardsAttributes` and
+   `Concerns\HasEvents`, and `EloquentOverrides` puts them in front of Laravel's through
+   Composer's class map. They form three groups, installed independently of each other: the
+   two relation files, which need each other — a `Relation` that no longer switches the flag
+   off, next to Laravel's own relation classes, would have eager loading add a `where` on a key
+   that is not there yet — and then the mass-assignment window and the model-event dispatcher,
+   one file each. A release that moves one group leaves the other two installed.
    Each copy carries the checksum of the file it was taken from. A Laravel release that touches
-   either one leaves the application on Laravel's classes — with the defect — rather than on a
-   copy that has quietly fallen behind; the worker writes the reason to stderr at start-up and
+   one leaves the application on Laravel's class for that group — with the defect — rather than
+   on a copy that has quietly fallen behind; `src/bootstrap.php` raises an `E_USER_WARNING`
+   naming the group and the reason, the worker writes the same to stderr at start-up, and
    `test_the_copies_still_match_the_laravel_files_behind_them` fails, which is where the copies
-   are meant to be brought forward by hand — `php bin/refresh-eloquent-overrides.php` re-copies
-   both files, re-applies the edits and prints the new checksums. Only Laravel 13.26.1 is
-   copied, and `composer.json` requires `~13.26.1` so that an untested release is refused at
-   install rather than silently falling back. The churn is real rather than theoretical:
-   `Relation` gained `withConstraints()` and a second flag between 13.2.0 and 13.26.1, and the
-   CI of this branch went red on exactly that. The `Laravel drift` workflow installs the newest
-   Laravel 13 every night, so a release that moves past the copies is found here first.
+   are meant to be brought forward — `php bin/refresh-eloquent-overrides.php` re-copies every
+   file, re-applies the edits and prints the new checksums. Only Laravel 13.26.1 is copied, and
+   `composer.json` requires `~13.26.1` so that an untested release is refused at install rather
+   than silently falling back. The churn is real rather than theoretical: `Relation` gained
+   `withConstraints()` and a second flag between 13.2.0 and 13.26.1, and the CI of this branch
+   went red on exactly that. The `Laravel drift` workflow installs the newest Laravel 13 every
+   night, so a release that moves past the copies is found here first.
    Three things the copies do not reach. A coroutine spawned **inside** a window does not inherit
    it — the window lives in the opener's own context — so a relation built there is constrained
-   where the opener wanted it bare. A package shipping its own `Relation` subclass with its own
-   `addConstraints()` reads the shared property, which is now permanently true, and adds
-   constraints during an eager load. And `opcache.preload` declaring either class before Composer
-   includes `src/bootstrap.php` leaves the application on Laravel's own.
-   `tests/EloquentOverridesTest.php` pins the behaviour; six of its cases fail with
-   `SPAWN_ELOQUENT_OVERRIDES=0`.
+   where the opener wanted it bare, a model filled there is filled guarded, and a model event
+   fired there is delivered where the opener asked for silence. A package shipping its own
+   `Relation` subclass with its own `addConstraints()` reads the shared property, which is now
+   permanently true, and adds constraints during an eager load. And `opcache.preload` declaring
+   any of the four classes before Composer includes `src/bootstrap.php` leaves the application
+   on Laravel's own.
+   `tests/EloquentOverridesTest.php` and `tests/EloquentStaticsIsolationTest.php` pin the
+   behaviour; six cases of the first and five of the second fail with
+   `SPAWN_ELOQUENT_OVERRIDES=0`. Nothing pins the independence of the groups themselves: it
+   would take a Laravel file that has moved, which no fixture can stand in for, so the group a
+   release breaks is found by the drift job rather than by a test here.
+
+13. **Two throttling windows are left open, and both are Laravel's.** `AtomicThrottleRequests`
+   answers the `throttle` alias and charges before it decides, so the ordinary limit holds
+   whatever arrives at once. A limit declared with an `afterCallback` — `Limit::perMinute(5)`
+   with a callback deciding from the response — is charged after the response by design, so
+   its pre-check is the only guard it has and the window between check and charge stays.
+   `ThrottleRequestsWithRedis`, which an application wires up by hand, asks a read-only Lua
+   script and then calls `acquire()`, throwing away the atomic verdict that call returns
+   (`ThrottleRequestsWithRedis.php:99,120`); the window is one round trip wide rather than a
+   whole request, and it is there. Read from the source, not measured. An OTP, login or
+   payment route is where that difference is a security boundary rather than a comfort: a
+   six-digit code behind a limit of five a minute takes about 3300 hours to walk at the
+   limit, and a hundredth of that at a hundred a minute. Until upstream closes them, put such
+   a route behind the plain `throttle` alias (which this package fixes) rather than the Redis
+   middleware, and keep a limit in front of the application — nginx `limit_req` or a WAF.
+
+14. **A pooled phpredis client freed at engine shutdown segfaults.** The crash is in
+   `redis_pool_destroy()` calling `zend_async_pool_close()` from `free_redis_object()`, reached
+   from `shutdown_executor()` — the async runtime is already gone by then, and the pool walks it
+   anyway. It costs nothing while a worker is up, because a client is freed inside the request
+   that made it; it shows up when a process ends holding one, which is what a test run does.
+   `RedisPoolTest` collects its clients in `tearDown()` for that reason, and without it the
+   whole suite ends in a core dump after reporting every test as passed — the exit code is 139
+   and the summary line says OK, so a CI job reads as failed with nothing in the output to say
+   why. Owned by the extension pair rather than by this package.
+
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`

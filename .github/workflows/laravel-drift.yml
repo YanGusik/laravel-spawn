@@ -1,12 +1,13 @@
 name: Laravel drift
 
-# The two Eloquent files under overrides/ are copies, frozen against the release they were
-# taken from. A newer Laravel that touches either one leaves an application on Laravel's own
-# classes — the defect comes back, quietly, with a line on stderr. This job installs the
-# newest Laravel 13 every night and fails when that has happened, so the copies are brought
-# forward by whoever maintains the package rather than discovered by whoever runs it.
+# The four Eloquent files under overrides/ are copies, frozen against the release they were
+# taken from. A newer Laravel that touches one of them leaves an application on Laravel's own
+# class for that group of copies — the defect comes back, quietly, with a line on stderr. This
+# job installs the newest Laravel 13 every night and fails when that has happened, so the
+# copies are brought forward by whoever maintains the package rather than discovered by whoever
+# runs it.
 #
-# Bring them forward with `php bin/refresh-eloquent-overrides.php`, which re-copies both files,
+# Bring them forward with `php bin/refresh-eloquent-overrides.php`, which re-copies every file,
 # re-applies the edits and prints the checksums to put into EloquentOverrides.
 
 on:

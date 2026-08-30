@@ -35,6 +35,7 @@ parameters:
 
 rules:
     - Spawn\Laravel\PHPStan\MutableStaticPropertyRule
+    - Spawn\Laravel\PHPStan\UnscopedGuardSwitchRule
 
 services:
     # An application that scopes services of its own lists their types in

@@ -32,6 +32,9 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **URL** | `scopedSingleton` (in `AsyncServiceProvider`), cloned from the boot-time generator | The generator's request, cached root and scheme; the response factory's redirector |
 | **Vite** | `scopedSingleton` (in `AsyncServiceProvider`) | CSP nonce and preloaded assets |
 | **Terminating callbacks** | `AsyncApplication::terminating()` | The callbacks a request registers, run at its end and dropped with it |
+| **HTTP Client** | [`AsyncHttpFactory`](src/Http/Client/AsyncHttpFactory.php) — one factory, per-request stub state | `Http::fake()`, recorded requests, response sequences, `preventStrayRequests()`. Global middleware and options stay worker-wide |
+| **Log** | [`AsyncLogManager`](src/Log/AsyncLogManager.php) building [`AsyncLogger`](src/Log/AsyncLogger.php) channels | `Log::withContext()` tags, per request. Channels stay memoised, and `Log::shareContext()` stays process-wide |
+| **Eloquent statics** | copies of `Concerns\GuardsAttributes` and `Concerns\HasEvents` (in [`EloquentOverrides`](src/Database/Eloquent/EloquentOverrides.php)) | The window `Model::unguarded()` opens and the dispatcher `Model::withoutEvents()` installs. `Model::unguard()` and `Model::setEventDispatcher()` stay process-wide |
 
 ### Third-Party Packages
 
@@ -47,9 +50,43 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 
 ## Safe — No Adaptation Needed
 
-These components are stateless or create new instances per request:
+Nothing in these keeps state a request writes, so one worker serving many requests changes
+nothing about them:
 
-Cache, Queue, Mail, Log, Validation, Filesystem, HTTP Client, Notifications, Encryption, Hashing, Pagination, Sanctum, Passport, Scout, Cashier, Horizon.
+Queue, Validation, Filesystem, Notifications, Encryption, Hashing, Pagination, Sanctum,
+Passport, Scout, Cashier, Horizon.
+
+## Shared per worker — one object, and no per-request reset
+
+Each of these is memoised for the life of the process, so what one request sets on it, the
+next request reads ([#65](https://github.com/YanGusik/laravel-spawn/issues/65)). They are
+listed rather than adapted, and the fixes are open. The first three carry a reproducer under
+`tests/proof/`; the mail entry is a reading of the framework source and nothing more.
+
+| Component | The object | What crosses |
+|---|---|---|
+| **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()` and `alwaysFrom()` write to the memoised mailer. Not reproduced |
+
+The rate limiter belongs to no row above, because nothing of a request is kept on the shared
+object. `RateLimiter::tooManyAttempts()` reads the counter and `hit()` raises it, with nothing
+atomic spanning the two, so callers whose read lands before the first write are all admitted.
+The window is Laravel's and no store closes it — it lies between two calls into the store —
+but what concurrency sets is how many callers fit inside it: under php-fpm the worker count,
+here whatever arrives together. Measured against `throttle:5,1` on a store costing one
+millisecond a call: a burst of 10 admitted 10 and a burst of 500 admitted 500, while the same
+100 requests spaced a millisecond apart admitted 8 (`tests/proof/measure_throttle_fanout.php`).
+
+[`AtomicThrottleRequests`](src/Http/Middleware/AtomicThrottleRequests.php) answers the
+`throttle` alias in async mode and charges before it decides: `hit()` returns the count after
+raising it and is atomic in itself, so one call replaces the pair. The rejected request pays
+for its attempt, which upstream does not charge it; the decay window is not extended by that,
+and the headers are identical. Turn it off with `async.atomic_throttle => false`.
+
+Two windows are left, both narrower and neither closed. A limit declared with an
+`afterCallback` is charged after the response, so its pre-check is all there is. And
+`ThrottleRequestsWithRedis`, which an application wires up by hand, throws away the verdict
+its own atomic script returns (`ThrottleRequestsWithRedis.php:99,120`) and re-asks in a second
+call — read from the source, not measured here.
 
 ---
 
@@ -268,9 +305,14 @@ See [`AsyncTranslator`](src/Translation/AsyncTranslator.php) for a minimal examp
 
 ---
 
-## PHPStan Rule
+## PHPStan Rules
 
 [`MutableStaticPropertyRule`](src/PHPStan/MutableStaticPropertyRule.php) scans for mutable static properties — the #1 source of coroutine state leaks.
+
+[`UnscopedGuardSwitchRule`](src/PHPStan/UnscopedGuardSwitchRule.php) reports `Model::unguard()`
+and `Model::reguard()`. The scoped `Model::unguarded(callable)` is held per coroutine here; the
+pair has no callback to close and writes the class static on purpose, which is what a seeder
+and a service provider mean and what request-handling code must not do.
 
 ```bash
 # Scan a vendor package

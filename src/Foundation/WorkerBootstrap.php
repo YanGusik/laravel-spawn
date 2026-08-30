@@ -55,10 +55,11 @@ final class WorkerBootstrap
     }
 
     /**
-     * Say out loud when Eloquent's relation classes are Laravel's own.
+     * Say out loud when any group of Eloquent copies is Laravel's own class instead.
      *
-     * A worker without the copies still serves, and what it serves is one request's rows to
-     * another — silently, in valid-looking SQL. That is worth a line on stderr at every start.
+     * A worker without them still serves, and what it serves is one request's rows to another,
+     * or a write that got past a guard it should not have — silently, in valid-looking SQL.
+     * That is worth a line on stderr at every start.
      */
     private static function reportEloquentOverrides(): void
     {
@@ -66,7 +67,7 @@ final class WorkerBootstrap
             return;
         }
 
-        fwrite(STDERR, '[async] Eloquent relation constraints are not coroutine-safe in this worker: '
+        fwrite(STDERR, '[async] Eloquent is not coroutine-safe in this worker: '
             .EloquentOverrides::status()."\n");
     }
 
