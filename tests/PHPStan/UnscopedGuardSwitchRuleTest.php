@@ -11,6 +11,19 @@ use Spawn\Laravel\PHPStan\UnscopedGuardSwitchRule;
  */
 class UnscopedGuardSwitchRuleTest extends RuleTestCase
 {
+    /**
+     * Analysing a fixture that extends Model pulls in the whole Eloquent hierarchy, which
+     * costs more than the 128 MB a stock PHP allows — the CI image runs with that default and
+     * died inside PHPStan's own cache writer. The other rule tests analyse plain classes and
+     * never come near it.
+     */
+    protected function setUp(): void
+    {
+        parent::setUp();
+
+        ini_set('memory_limit', '512M');
+    }
+
     protected function getRule(): Rule
     {
         return new UnscopedGuardSwitchRule();

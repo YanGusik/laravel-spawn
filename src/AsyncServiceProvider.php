@@ -406,13 +406,9 @@ class AsyncServiceProvider extends ServiceProvider
     }
 
     /**
-     * One LogManager per worker, whose channels tag each request's lines with that request's
-     * context alone.
-     *
      * LogServiceProvider is registered from Application::__construct and is not deferred, so
-     * a plain singleton() here replaces its binding for good. The channels stay memoised —
-     * a per-request manager would open the log file once per request — and only the context
-     * moves, which is the half a request writes.
+     * a plain singleton() here replaces its binding for good — no extend() dance of the kind
+     * the translator needs. What the replacement changes is in {@see AsyncLogManager}.
      */
     private function registerLogAdapter(): void
     {

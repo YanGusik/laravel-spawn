@@ -34,8 +34,8 @@ final class GuardWindow
     /**
      * Run the callback with mass assignment allowed in this coroutine and nowhere else.
      *
-     * The previous window is restored even when the callback throws, and a coroutine killed
-     * inside one leaves nothing behind: the context goes with it.
+     * The window closes on the way out however the callback leaves — a return or a throw — and
+     * a coroutine killed inside one leaves nothing behind, because the context goes with it.
      */
     public static function open(Closure $callback): mixed
     {
@@ -47,10 +47,9 @@ final class GuardWindow
         try {
             return $callback();
         } finally {
-            // Restoring writes the previous value back rather than removing the entry, so a
-            // null previous leaves a null entry. Every read here is findLocal(), which answers
-            // null either way; a read through find() would see the null entry shadow a value
-            // of an enclosing scope.
+            // Closing writes the previous value back rather than removing the entry, so the
+            // usual case leaves a null entry behind. Reads are findLocal(), which answers null
+            // either way; find() would let that entry shadow an enclosing scope's value.
             $context->set(self::KEY, $previous, true);
         }
     }

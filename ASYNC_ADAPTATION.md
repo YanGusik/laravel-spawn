@@ -74,7 +74,7 @@ The window is Laravel's and no store closes it — it lies between two calls int
 but what concurrency sets is how many callers fit inside it: under php-fpm the worker count,
 here whatever arrives together. Measured against `throttle:5,1` on a store costing one
 millisecond a call: a burst of 10 admitted 10 and a burst of 500 admitted 500, while the same
-100 requests spaced a millisecond apart admitted 8.
+100 requests spaced a millisecond apart admitted 8 (`tests/proof/measure_throttle_fanout.php`).
 
 [`AtomicThrottleRequests`](src/Http/Middleware/AtomicThrottleRequests.php) answers the
 `throttle` alias in async mode and charges before it decides: `hit()` returns the count after

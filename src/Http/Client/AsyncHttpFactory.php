@@ -11,15 +11,15 @@ use Spawn\Laravel\Foundation\RequestContext;
  * An HTTP client factory whose stubs and recordings belong to the request that installed
  * them.
  *
- * There is one factory per worker, as this package's own start-up intends: Laravel registers
- * no binding for it, so with facade caching off the root would be rebuilt on every call and
- * lose the global middleware and global options a provider set at boot. What must not be
+ * There is one factory per worker, and this package is what makes it so: Laravel registers no
+ * binding for it, and with facade caching off an unbound root is rebuilt on every call and
+ * loses the global middleware and global options a provider set at boot. What must not be
  * shared is the other half of the object — the stub callbacks, the recorded pairs, the
  * response sequences and the stray-request guard — each of which belongs to the request that
  * installed it, and none of which the framework resets between requests.
  *
- * The state moves without touching the framework methods that write it, of which there are
- * about twenty-five: the declared properties are removed from this object in the constructor,
+ * The state moves without touching the sixteen framework methods that write it: the declared
+ * properties are removed from this object in the constructor,
  * so every read and write falls through to `__get()` and `__set()` and lands in a
  * {@see HttpClientState} taken from the request's context. `__get()` returns by reference,
  * which is what lets unmodified code run `$this->recorded[] = [$request, $response]`.

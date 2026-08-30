@@ -44,10 +44,9 @@ final class EventDispatcherWindow
         try {
             return $callback();
         } finally {
-            // Restoring writes the previous value back rather than removing the entry, so a
-            // null previous leaves a null entry. Every read here is findLocal(), which answers
-            // null either way; a read through find() would see the null entry shadow a value
-            // of an enclosing scope.
+            // Closing writes the previous value back rather than removing the entry, so an
+            // outermost window leaves a null entry behind. Reads are findLocal(), which answers
+            // null either way; find() would let that entry shadow an enclosing scope's value.
             $context->set(self::KEY, $previous, true);
         }
     }

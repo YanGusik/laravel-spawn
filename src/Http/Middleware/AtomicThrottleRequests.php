@@ -12,8 +12,7 @@ use Illuminate\Routing\Middleware\ThrottleRequests;
  * two. Every caller whose read lands before the first write is admitted, so the number let
  * through is the number that arrived inside that window. Under php-fpm that is bounded by the
  * worker count; one async worker serves as many coroutines as arrive, and a burst of 500
- * against `throttle:5,1` was admitted in full (`tests/proof/prove_rate_limiter.php` shows the
- * pair at a limit of one).
+ * against `throttle:5,1` is admitted in full (`tests/proof/measure_throttle_fanout.php`).
  *
  * `hit()` returns the count after raising it and is atomic in itself — `add()` for the timer,
  * then the store's own `increment()` — so charging first answers the question in one call and

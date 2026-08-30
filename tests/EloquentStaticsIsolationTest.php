@@ -222,20 +222,16 @@ class EloquentStaticsIsolationTest extends AsyncTestCase
     }
 
     /**
-     * What a plain model keeps of the given attributes: `name` is fillable and `admin` is not,
-     * so the pair says whether the guard is on without a database behind it.
+     * What a model keeps of the given attributes. GuardedRow declares `name` fillable and
+     * nothing else, so a pair of the two says whether the guard is on, and `fill()` answers
+     * without touching the table.
      *
      * @param  array<string, mixed>  $attributes
      * @return array<string, mixed>
      */
     private static function fillablePart(array $attributes): array
     {
-        $model = new class extends Model
-        {
-            protected $fillable = ['name'];
-        };
-
-        return $model->fill($attributes)->getAttributes();
+        return (new GuardedRow())->fill($attributes)->getAttributes();
     }
 
     /**

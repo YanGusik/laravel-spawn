@@ -5,7 +5,7 @@ namespace Spawn\Laravel\Log;
 use Illuminate\Log\Logger;
 
 /**
- * A `Logger` whose per-request context is per request.
+ * A `Logger` that keeps each request's context apart from every other request's.
  *
  * `withContext()` is the only way an application tags its own log lines, and upstream writes
  * the tag into a property of an object the whole worker shares. Here it writes into

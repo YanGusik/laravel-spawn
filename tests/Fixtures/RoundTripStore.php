@@ -10,8 +10,8 @@ use function Async\delay;
  * An in-memory store whose every call costs one round trip and nothing more.
  *
  * Redis, Memcached and a database store all suspend the coroutine while the socket is
- * in flight; an ArrayStore never does, and a reproducer built on one would report the
- * same verdict for a limiter that was safe. What the delay must not do is add
+ * in flight; an ArrayStore never does, so requests never interleave inside the check-then-act
+ * pair and a run built on one reports the same verdict for a limiter that was safe. What the delay must not do is add
  * suspension points *inside* a single store call: `INCR` and `SET NX` are one command
  * each, so a stub that yielded between its own read and its own write would
  * manufacture a lost update that no real store has, and the counter — rather than
