@@ -40,9 +40,9 @@ final class EloquentOverrides
      * `relation constraints` needs both its files and neither can carry the fix alone.
      * `Relation` holds the window in the coroutine that opened it instead of in the property,
      * and `Concerns\HasRelationships` builds the relation classes of this package, which read
-     * that window. Left with Laravel's relation classes, a `Relation` that no longer switches
-     * the flag off would have eager loading add a `where` on a key that is not there yet; left
-     * with Laravel's `Relation`, the window would never open.
+     * that window. Left with Laravel's relation classes, a `Relation` that leaves the flag
+     * alone would have eager loading add a `where` on a key that is not there yet; left with
+     * Laravel's `Relation`, the window would never open.
      */
     private const GROUPS = [
         'relation constraints' => [

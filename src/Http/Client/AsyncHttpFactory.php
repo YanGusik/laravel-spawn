@@ -15,8 +15,8 @@ use Spawn\Laravel\Foundation\RequestContext;
  * no binding for it, so with facade caching off the root would be rebuilt on every call and
  * lose the global middleware and global options a provider set at boot. What must not be
  * shared is the other half of the object — the stub callbacks, the recorded pairs, the
- * response sequences and the stray-request guard — each of which one request installs and
- * every later request used to inherit, because nothing resets them.
+ * response sequences and the stray-request guard — each of which belongs to the request that
+ * installed it, and none of which the framework resets between requests.
  *
  * The state moves without touching the framework methods that write it, of which there are
  * about twenty-five: the declared properties are removed from this object in the constructor,
