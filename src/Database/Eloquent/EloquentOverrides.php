@@ -45,6 +45,16 @@ final class EloquentOverrides
             'Concerns/HasRelationships.php',
             'a7258ca67a51e13722a27ea62b9d3ed802a56c40d51920ffa23301acaf7b4059',
         ],
+        'Illuminate\\Database\\Eloquent\\Concerns\\GuardsAttributes' => [
+            'overrides/laravel-13/Illuminate/Database/Eloquent/Concerns/GuardsAttributes.php',
+            'Concerns/GuardsAttributes.php',
+            '2e1b77306a0fbc050e1ae3c78d2b5b53d3033c347b4d0a9a2ada5160e1fb6d61',
+        ],
+        'Illuminate\\Database\\Eloquent\\Concerns\\HasEvents' => [
+            'overrides/laravel-13/Illuminate/Database/Eloquent/Concerns/HasEvents.php',
+            'Concerns/HasEvents.php',
+            'e86185a511f4e5099315df5cc3959679502d7c9a71157cedf31a302fefc313cf',
+        ],
     ];
 
     /**

@@ -32,6 +32,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **URL** | `scopedSingleton` (in `AsyncServiceProvider`), cloned from the boot-time generator | The generator's request, cached root and scheme; the response factory's redirector |
 | **Vite** | `scopedSingleton` (in `AsyncServiceProvider`) | CSP nonce and preloaded assets |
 | **Terminating callbacks** | `AsyncApplication::terminating()` | The callbacks a request registers, run at its end and dropped with it |
+| **Eloquent statics** | copies of `Concerns\GuardsAttributes` and `Concerns\HasEvents` (in [`EloquentOverrides`](src/Database/Eloquent/EloquentOverrides.php)) | The window `Model::unguarded()` opens and the dispatcher `Model::withoutEvents()` installs. `Model::unguard()` and `Model::setEventDispatcher()` stay process-wide |
 
 ### Third-Party Packages
 
@@ -47,9 +48,25 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 
 ## Safe — No Adaptation Needed
 
-These components are stateless or create new instances per request:
+Nothing in these keeps state a request writes, so one worker serving many requests changes
+nothing about them:
 
-Cache, Queue, Mail, Log, Validation, Filesystem, HTTP Client, Notifications, Encryption, Hashing, Pagination, Sanctum, Passport, Scout, Cashier, Horizon.
+Queue, Validation, Filesystem, Notifications, Encryption, Hashing, Pagination, Sanctum,
+Passport, Scout, Cashier, Horizon.
+
+## Shared per worker — one object, and no per-request reset
+
+Each of these is memoised for the life of the process, so what one request sets on it, the
+next request reads ([#65](https://github.com/YanGusik/laravel-spawn/issues/65)). They are
+listed rather than adapted, and the fixes are open. The first three carry a reproducer under
+`tests/proof/`; the mail entry is a reading of the framework source and nothing more.
+
+| Component | The object | What crosses |
+|---|---|---|
+| **Log** | `LogManager::$channels` memoises one `Logger` per channel; `LogManager::$sharedContext` | `Log::withContext(['request_id' => …])` tags every other request's lines |
+| **HTTP Client** | `Illuminate\Http\Client\Factory`, a worker singleton | `Http::fake()`, `preventStrayRequests()`, global middleware |
+| **Cache** | `CacheManager::$stores` | Nothing per request, but `RateLimiter::tooManyAttempts()` and `hit()` are two calls with no atomicity between them, so a limit of N admits more under concurrency. The window is Laravel's and no store closes it |
+| **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()` and `alwaysFrom()` write to the memoised mailer. Not reproduced |
 
 ---
 
