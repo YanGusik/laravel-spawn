@@ -27,6 +27,14 @@ class RedisPoolTest extends AsyncTestCase
     protected function tearDown(): void
     {
         Facade::clearResolvedInstances();
+
+        // A pooled phpredis client freed by the engine's shutdown, rather than while the
+        // request is still up, segfaults in zend_async_pool_close: the async runtime is gone
+        // by then and redis_pool_destroy() walks it anyway. Dropping the clients here is what
+        // keeps the whole suite from ending in a core dump, and it takes an explicit cycle
+        // collection because the manager and its connections hold each other.
+        gc_collect_cycles();
+
         parent::tearDown();
     }
 
