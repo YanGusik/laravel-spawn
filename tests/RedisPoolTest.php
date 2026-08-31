@@ -28,11 +28,11 @@ class RedisPoolTest extends AsyncTestCase
     {
         Facade::clearResolvedInstances();
 
-        // A pooled phpredis client freed by the engine's shutdown, rather than while the
-        // request is still up, segfaults in zend_async_pool_close: the async runtime is gone
-        // by then and redis_pool_destroy() walks it anyway. Dropping the clients here is what
-        // keeps the whole suite from ending in a core dump, and it takes an explicit cycle
-        // collection because the manager and its connections hold each other.
+        // The manager and its connections hold each other, so a pooled client outlives this
+        // test unless the cycle is collected here. Freeing it in the destructor phase is what
+        // the extension expects; an image carrying true_async older than the fix for
+        // true-async/php-async#274 segfaults at shutdown instead, after the suite has already
+        // reported every test as passed.
         gc_collect_cycles();
 
         parent::tearDown();
