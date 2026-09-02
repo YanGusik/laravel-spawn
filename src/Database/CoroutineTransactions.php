@@ -24,9 +24,11 @@ use function Async\coroutine_context;
  * ManagesTransactions' own accessors, Laravel 13 touches the property in
  * transaction(), getReadPdo(), handleQueryException() and setPdo().
  *
- * What this trait does not fix: DatabaseTransactionsManager is a process
- * singleton, so the levels reported to it interleave between coroutines and
- * afterCommit callbacks can run for the wrong one.
+ * The levels reported to the transactions manager interleave between coroutines
+ * the same way, and Laravel's manager identifies a transaction by connection name
+ * and level alone. AsyncDatabaseTransactionsManager keeps its records in the same
+ * coroutine context as this counter, so a coroutine's afterCommit callbacks wait
+ * for that coroutine's commit.
  */
 trait CoroutineTransactions
 {
