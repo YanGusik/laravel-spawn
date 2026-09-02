@@ -97,6 +97,38 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | SMTP Connection Pool
+    |--------------------------------------------------------------------------
+    |
+    | One mailer per worker means one SMTP socket, and a message is a sequence
+    | of commands on it rather than a single round trip, so concurrent sends
+    | interleave: a protocol error, or a body delivered under another request's
+    | envelope. With the pool a send borrows a connection for one message.
+    |
+    | 'max' counts connections per SMTP mailer, not per worker: a failover or
+    | roundrobin mailer pools each of its SMTP members separately. A mailer that
+    | sets 'max_per_second' wants 'max' => 1, or that rate divided by 'max':
+    | Symfony enforces the rate on each connection, so a pool of five sends five
+    | times the cap.
+    |
+    | 'acquire_timeout' is how long a send waits for a free connection, in
+    | seconds; 0 waits, leaving the deadline to the request or the queue job.
+    | A wait that does expire is reported as Async\TimeoutException, which
+    | failover deliberately does not catch — a busy pool is not a dead relay.
+    |
+    | An application that registers its own 'smtp' transport creator keeps it,
+    | and keeps the single shared connection that comes with it.
+    |
+    */
+
+    'mail_pool' => [
+        'enabled'         => true,
+        'max'             => 5,
+        'acquire_timeout' => 0,
+    ],
+
+    /*
+    |--------------------------------------------------------------------------
     | gRPC Handlers
     |--------------------------------------------------------------------------
     |

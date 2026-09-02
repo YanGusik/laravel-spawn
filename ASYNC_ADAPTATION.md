@@ -36,6 +36,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **Process** | [`AsyncProcessFactory`](src/Process/AsyncProcessFactory.php) — one factory, per-request fake state | `Process::fake()`, recorded processes, `preventStrayProcesses()`. Macros stay worker-wide |
 | **Log** | [`AsyncLogManager`](src/Log/AsyncLogManager.php) building [`AsyncLogger`](src/Log/AsyncLogger.php) channels | `Log::withContext()` tags, per request. Channels stay memoised, and `Log::shareContext()` stays process-wide |
 | **Eloquent statics** | copies of `Concerns\GuardsAttributes` and `Concerns\HasEvents` (in [`EloquentOverrides`](src/Database/Eloquent/EloquentOverrides.php)) | The window `Model::unguarded()` opens and the dispatcher `Model::withoutEvents()` installs. `Model::unguard()` and `Model::setEventDispatcher()` stay process-wide |
+| **Mail** | [`MailPool`](src/Mail/MailPool.php) installing [`PooledTransport`](src/Mail/PooledTransport.php) on SMTP mailers | The SMTP connection: a send borrows one for the message it carries, up to `async.mail_pool.max` at a time. The mailer's global addresses stay worker-wide |
 
 ### Third-Party Packages
 
@@ -61,12 +62,12 @@ Passport, Scout, Cashier, Horizon.
 
 Each of these is memoised for the life of the process, so what one request sets on it, the
 next request reads ([#65](https://github.com/YanGusik/laravel-spawn/issues/65)). They are
-listed rather than adapted, and the fixes are open. The first three carry a reproducer under
-`tests/proof/`; the mail entry is a reading of the framework source and nothing more.
+listed rather than adapted, and the fixes are open. The mail entry is a reading of the
+framework source and nothing more.
 
 | Component | The object | What crosses |
 |---|---|---|
-| **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()` and `alwaysFrom()` write to the memoised mailer. Not reproduced |
+| **Mail** | `MailManager::$mailers` | `Mailer::alwaysTo()`, `alwaysFrom()`, `alwaysReplyTo()` and `alwaysReturnPath()` write to the memoised mailer. Not reproduced. The connection under that mailer is pooled, so what is left is these four addresses |
 
 The rate limiter belongs to no row above, because nothing of a request is kept on the shared
 object. `RateLimiter::tooManyAttempts()` reads the counter and `hit()` raises it, with nothing
