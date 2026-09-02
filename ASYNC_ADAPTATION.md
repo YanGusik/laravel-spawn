@@ -33,6 +33,7 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **Vite** | `scopedSingleton` (in `AsyncServiceProvider`) | CSP nonce and preloaded assets |
 | **Terminating callbacks** | `AsyncApplication::terminating()` | The callbacks a request registers, run at its end and dropped with it |
 | **HTTP Client** | [`AsyncHttpFactory`](src/Http/Client/AsyncHttpFactory.php) — one factory, per-request stub state | `Http::fake()`, recorded requests, response sequences, `preventStrayRequests()`. Global middleware and options stay worker-wide |
+| **Process** | [`AsyncProcessFactory`](src/Process/AsyncProcessFactory.php) — one factory, per-request fake state | `Process::fake()`, recorded processes, `preventStrayProcesses()`. Macros stay worker-wide |
 | **Log** | [`AsyncLogManager`](src/Log/AsyncLogManager.php) building [`AsyncLogger`](src/Log/AsyncLogger.php) channels | `Log::withContext()` tags, per request. Channels stay memoised, and `Log::shareContext()` stays process-wide |
 | **Eloquent statics** | copies of `Concerns\GuardsAttributes` and `Concerns\HasEvents` (in [`EloquentOverrides`](src/Database/Eloquent/EloquentOverrides.php)) | The window `Model::unguarded()` opens and the dispatcher `Model::withoutEvents()` installs. `Model::unguard()` and `Model::setEventDispatcher()` stay process-wide |
 
