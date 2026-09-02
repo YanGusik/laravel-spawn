@@ -110,6 +110,25 @@ Requires the `trueasync/php-true-async:latest-frankenphp` Docker image.
 php artisan async:franken --host=0.0.0.0 --port=8080 --workers=1 --buffer=1
 ```
 
+### A worker of your own
+
+Any process that serves requests as coroutines calls one method to make the adapters
+per-request:
+
+```php
+\Spawn\Laravel\Foundation\WorkerBootstrap::run($app);
+```
+
+It applies the `async.db_pool` options and purges the connections bootstrap already opened,
+configures the Redis pool, tells the adapters that boot is over and switches the application
+into async mode — the three servers above do nothing else to start. `TrueAsyncServer::initializeApp($app)` is the
+same call for a thread of an application that has its own server.
+
+An adapter that is never told boot is over is a no-op that reports nothing: `AsyncViewFactory`
+keeps answering from its process-wide state, so two coroutines rendering Blade share
+`@section` and `@push`. Under php-fpm that is the correct behaviour, since one process serves
+one request; under coroutines it is state shared between requests.
+
 ---
 
 ## Docker quick start

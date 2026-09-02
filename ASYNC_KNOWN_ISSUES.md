@@ -240,6 +240,24 @@ visibly; where none is named, nothing will notice the change but a reader.
    a route behind the plain `throttle` alias (which this package fixes) rather than the Redis
    middleware, and keep a limit in front of the application — nginx `limit_req` or a WAF.
 
+14. **A coroutine spawned inside a request works on another connection.** The pooled PDO
+   handle is bound to the coroutine that asked for it (`ext/pdo/pdo_pool.c`, keyed by the
+   current coroutine), and the pool keeps it while a transaction is open. So `Async\spawn()`
+   inside a request gets a link of its own: the child reads `$pdo->inTransaction()` as false
+   while the request holds a transaction. Nothing of the link crosses that boundary — an open
+   transaction, a temporary table, a `SET`, `LAST_INSERT_ID`, an unread cursor.
+
+   A `DB::transaction()` in the child is therefore a transaction of its own, not a savepoint:
+   it commits on its own link, its `afterCommit` callbacks run, and the request's `rollBack()`
+   does not reach its rows. `DB::transactionLevel()` reading 1 there is correct — on that link
+   the transaction is the first one. The same code without the pool raises `There is already
+   an active transaction` from PDO instead, because then the link is shared.
+
+   This is what a connection per coroutine means, and it is not something the package can
+   detect: a coroutine of the request and a coroutine of another request are the same thing to
+   the pool, and a child taking a transaction of its own is a legitimate operation. Work that
+   has to be inside the request's transaction stays in the request's coroutine.
+
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`
