@@ -22,6 +22,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerSessionAdapter();
         $this->registerAuthAdapter();
         $this->registerDatabaseAdapter();
+        $this->registerTransactionsManagerAdapter();
         $this->registerPermissionAdapter();
         $this->registerInertiaAdapter();
         $this->registerSocialiteAdapter();
@@ -225,6 +226,25 @@ class AsyncServiceProvider extends ServiceProvider
         \Illuminate\Database\Connection::resolverFor(
             'sqlsrv',
             fn($pdo, $db, $prefix, $config) => new \Spawn\Laravel\Database\AsyncSqlServerConnection($pdo, $db, $prefix, $config),
+        );
+    }
+
+    /**
+     * DatabaseServiceProvider is an Illuminate provider, and the application registers those
+     * before any package's, so a plain singleton() here replaces its `db.transactions` for
+     * good. No connection holds the replaced object: a connection is configured on first use,
+     * and every register() is over before the first boot(). What the replacement changes is
+     * in {@see \Spawn\Laravel\Database\AsyncDatabaseTransactionsManager}.
+     */
+    private function registerTransactionsManagerAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->singleton(
+            'db.transactions',
+            fn () => new \Spawn\Laravel\Database\AsyncDatabaseTransactionsManager(),
         );
     }
 

@@ -4,6 +4,7 @@ namespace Spawn\Laravel\Tests;
 
 use Illuminate\Database\Connection;
 use Illuminate\Database\MySqlConnection;
+use Spawn\Laravel\Database\AsyncDatabaseTransactionsManager;
 use Spawn\Laravel\Database\AsyncMySqlConnection;
 use Spawn\Laravel\Database\AsyncSqlServerConnection;
 use function Async\delay;
@@ -639,5 +640,163 @@ class TransactionIsolationTest extends AsyncTestCase
 
         $this->assertSame('result', $results['a']['returned'], 'the callback result is passed through');
         $this->assertSame(['BEGIN TRAN', 'COMMIT TRAN'], $results['a']['log']);
+    }
+
+    // ── The transactions manager ─────────────────────────────────────────────
+
+    /**
+     * Laravel's manager identifies a transaction by connection name and level, and two
+     * coroutines on one connection name both report level 1: B's commit staged A's pending
+     * record with its own and ran A's callback, and A rolled back afterwards. The records
+     * are the coroutine's, like the counter.
+     */
+    public function test_a_commit_runs_the_callbacks_of_its_own_coroutine_alone(): void
+    {
+        $conn = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $conn->bootCompleted();
+        $conn->setTransactionManager(new AsyncDatabaseTransactionsManager());
+
+        $events = [];
+
+        $this->runParallel([
+            'a' => function () use ($conn, &$events) {
+                $conn->beginTransaction();
+                $events[] = 'A began';
+                $conn->afterCommit(function () use (&$events) {
+                    $events[] = 'A callback ran';
+                });
+                $events[] = 'A registered';
+                delay(200);
+                $conn->rollBack();
+                $events[] = 'A rolled back';
+            },
+            'b' => function () use ($conn, &$events) {
+                delay(50);
+                $conn->beginTransaction();
+                $events[] = 'B began';
+                $conn->afterCommit(function () use (&$events) {
+                    $events[] = 'B callback ran';
+                });
+                $events[] = 'B registered';
+                $conn->commit();
+                $events[] = 'B committed';
+            },
+        ]);
+
+        $this->assertSame([
+            'A began', 'A registered',
+            'B began', 'B registered', 'B callback ran', 'B committed',
+            'A rolled back',
+        ], $events);
+    }
+
+    /**
+     * addCallback() attaches to the last pending record of the manager, which under
+     * concurrency is whichever coroutine began last: a callback A registered after B's
+     * begin() went onto B's record and ran inside B's commit, and A rolled back afterwards.
+     */
+    public function test_a_callback_attaches_to_the_transaction_of_its_own_coroutine(): void
+    {
+        $conn = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $conn->bootCompleted();
+        $conn->setTransactionManager(new AsyncDatabaseTransactionsManager());
+
+        $events = [];
+
+        $this->runParallel([
+            'a' => function () use ($conn, &$events) {
+                $conn->beginTransaction();
+                $events[] = 'A began';
+                delay(100);
+                $conn->afterCommit(function () use (&$events) {
+                    $events[] = 'A callback ran';
+                });
+                $events[] = 'A registered';
+                delay(100);
+                $conn->rollBack();
+                $events[] = 'A rolled back';
+            },
+            'b' => function () use ($conn, &$events) {
+                delay(50);
+                $conn->beginTransaction();
+                $events[] = 'B began';
+                $conn->afterCommit(function () use (&$events) {
+                    $events[] = 'B callback ran';
+                });
+                $events[] = 'B registered';
+                delay(100);
+                $conn->commit();
+                $events[] = 'B committed';
+            },
+        ]);
+
+        $this->assertSame([
+            'A began',
+            'B began', 'B registered',
+            'A registered',
+            'B callback ran', 'B committed',
+            'A rolled back',
+        ], $events);
+    }
+
+    /**
+     * A coroutine that ends inside a transaction leaves the manager a pending record
+     * nothing will ever commit. A callback the next coroutine registers outside any
+     * transaction of its own runs at once; attached to the leftover record it never runs.
+     */
+    public function test_a_record_left_by_a_finished_coroutine_does_not_capture_a_later_callback(): void
+    {
+        $conn = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $conn->bootCompleted();
+        $conn->setTransactionManager(new AsyncDatabaseTransactionsManager());
+
+        $this->inRequest(function () use ($conn) {
+            $conn->beginTransaction();
+        });
+
+        $ran = $this->inRequest(function () use ($conn) {
+            $ran = false;
+            $conn->afterCommit(function () use (&$ran) {
+                $ran = true;
+            });
+
+            return $ran;
+        });
+
+        $this->assertTrue($ran, 'outside a transaction the callback runs at registration');
+    }
+
+    /**
+     * A rolled-back savepoint takes the callbacks registered inside it, and the outer
+     * transaction's callbacks still run on its commit. Unwinding the savepoint assigns
+     * the parent record into currentTransaction[$connection], which is the write the
+     * state has to hand out by reference.
+     */
+    public function test_a_rolled_back_savepoint_drops_its_callbacks_and_keeps_the_outer_ones(): void
+    {
+        $conn = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $conn->bootCompleted();
+        $conn->setTransactionManager(new AsyncDatabaseTransactionsManager());
+
+        $fired = $this->inRequest(function () use ($conn) {
+            $fired = [];
+
+            $conn->beginTransaction();
+            $conn->afterCommit(function () use (&$fired) {
+                $fired[] = 'outer';
+            });
+
+            $conn->beginTransaction();
+            $conn->afterCommit(function () use (&$fired) {
+                $fired[] = 'inner';
+            });
+            $conn->rollBack();
+
+            $conn->commit();
+
+            return $fired;
+        });
+
+        $this->assertSame(['outer'], $fired);
     }
 }
