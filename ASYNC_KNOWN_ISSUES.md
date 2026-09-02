@@ -258,6 +258,39 @@ visibly; where none is named, nothing will notice the change but a reader.
    the pool, and a child taking a transaction of its own is a legitimate operation. Work that
    has to be inside the request's transaction stays in the request's coroutine.
 
+15. **Three ways an SMTP mailer keeps its single connection.** `MailPool` installs the pooled
+   transport as a custom `smtp` creator at worker start-up, and `createSymfonyTransport()`
+   consults custom creators before its own methods. An application that registered an `smtp`
+   creator of its own therefore keeps it, together with the one connection it builds;
+   `MailPool` leaves that creator in place and prints no warning.
+   The `sendmail` driver keeps its own single connection whatever the pool does: in `-bs` mode
+   `SendmailTransport` drives an `SmtpTransport` of its own over a pipe
+   (`SendmailTransport.php:64-68`), and `createSendmailTransport()` builds it. And a `Mailer` a
+   provider captured in a property during boot keeps the transport it was built with, since
+   `forgetMailers()` reaches the manager's own memo and nothing else.
+
+16. **What a pooled mailer changes besides the number of connections.** `max` counts
+   connections per SMTP mailer rather than per worker, because `failover` and `roundrobin`
+   build their members through `createSymfonyTransport()` and each SMTP member gets a pool of
+   its own: a failover over three hosts opens up to three times `max` from one worker.
+
+   `mail.mailers.*.max_per_second` is multiplied the same way, and this one is billed. Laravel
+   passes the mailer config to the transport factory as DSN options, which applies the rate to
+   each transport it builds (`EsmtpTransportFactory.php:70-71`), and `AbstractTransport` keeps
+   the rate and the last send time per instance (`AbstractTransport.php:34-35, 123-135`): a cap
+   of 10 a second with `max => 5` lets up to 50 a second reach the relay. The wait is a plain
+   `usleep()`, which the extension does not intercept, so a throttled send stops the worker
+   rather than its own coroutine — that part is Symfony's and holds without the pool too. A
+   mailer with `max_per_second` set wants `async.mail_pool.max => 1`, or the cap divided by the
+   pool size.
+
+   `Mail::mailer()->getSymfonyTransport()` answers a `PooledTransport`, which implements
+   `TransportInterface` and no more, so boot code calling `setLocalDomain()` or `getStream()`
+   on it fails with an `Error` naming that class. Per-connection configuration belongs in the
+   factory: everything `mail.mailers.*` declares is applied to every connection the pool opens,
+   and anything beyond that is what `Mail::extend('smtp', …)` is for.
+
+
 ---
 
 ## 3. Container contract gaps in `tryResolveScoped()`

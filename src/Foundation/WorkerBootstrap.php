@@ -39,6 +39,10 @@ final class WorkerBootstrap
         // Redis needs the same treatment: one shared connection would let concurrent
         // coroutines interleave commands on a single socket.
         \Spawn\Laravel\Redis\RedisPool::configure($app);
+
+        // And SMTP, where a message is a sequence of commands rather than one round trip,
+        // so an interleaving sends one request's body under another's envelope.
+        \Spawn\Laravel\Mail\MailPool::configure($app);
     }
 
     private static function switchToAsync(Application $app): void
