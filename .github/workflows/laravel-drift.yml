@@ -29,8 +29,8 @@ jobs:
               command -v curl >/dev/null 2>&1 || { apt-get update && apt-get install -y --no-install-recommends curl; }
               curl -sSL https://getcomposer.org/download/latest-stable/composer.phar -o /usr/local/bin/composer
               chmod +x /usr/local/bin/composer
-              # composer.json pins the release the copies were taken from; this job is the one
-              # place that deliberately looks past it.
+              # composer.json takes any 13 from the release the copies were taken from; this job
+              # checks the copies against the newest one on a schedule, between pushes.
               composer require --no-update --no-interaction "laravel/framework:^13.0"
               composer update --with-all-dependencies --no-interaction --no-progress --prefer-dist --ignore-platform-req=php+
               composer show laravel/framework | head -3
