@@ -5,7 +5,7 @@
   "license": "MIT",
   "require": {
     "php": "^8.6",
-    "laravel/framework": "~13.26.1",
+    "laravel/framework": "^13.26.1",
     "ext-pcntl": "*",
     "ext-pdo": "*"
   },

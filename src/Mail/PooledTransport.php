@@ -129,8 +129,15 @@ final class PooledTransport implements TransportInterface
         // The stream goes first. stop() sends QUIT and waits for the reply until the socket
         // timeout (default_socket_timeout, 60 seconds, unless the mailer config sets one),
         // and a relay that has half-closed never answers. With the stream already gone the
-        // write throws, and stop()'s finally still marks the transport stopped, which is what
+        // write fails on a null resource (a TypeError, which is why the catch below takes any
+        // Throwable), and stop()'s finally still marks the transport stopped, which is what
         // makes the later __destruct() a no-op instead of a second attempt on a dead socket.
+        //
+        // A connection whose send failed may already be stopped: since symfony/mailer 8.1.5
+        // the transport stops itself inside send() after a timeout or a broken pipe, and since
+        // 8.1.7 after a 421, sending QUIT and reading the reply up to the stream timeout. A
+        // relay gone silent mid-message therefore costs the send two timeouts, the reply's and
+        // QUIT's. A 5xx is answered with RSET and the connection stays open: this is the drop.
         $transport->getStream()->terminate();
 
         try {

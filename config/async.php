@@ -116,6 +116,11 @@ return [
     | A wait that does expire is reported as Async\TimeoutException, which
     | failover deliberately does not catch — a busy pool is not a dead relay.
     |
+    | A failed send reports after at most twice the mailer's 'timeout'
+    | (default_socket_timeout, 60 seconds, when unset): the reply that never
+    | comes, and the reply to the QUIT the transport sends after it. The
+    | connection is dropped, not reused.
+    |
     | An application that registers its own 'smtp' transport creator keeps it,
     | and keeps the single shared connection that comes with it.
     |
