@@ -5,6 +5,7 @@ namespace Spawn\Laravel\Server;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
 use Spawn\Laravel\Async\RawIo;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
@@ -133,6 +134,8 @@ class TrueAsyncServer implements ServerInterface
             } catch (\Throwable $terminateFailure) {
                 fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
             }
+
+            TransactionSweep::afterRequest($app);
         }
     }
 

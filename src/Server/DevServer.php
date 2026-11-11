@@ -10,6 +10,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 use function Async\spawn;
@@ -118,6 +119,7 @@ class DevServer implements ServerInterface
 
             $kernel->terminate($request, $response);
         } finally {
+            TransactionSweep::afterRequest($this->app);
             $requestScope->dispose();
             fclose($client);
         }

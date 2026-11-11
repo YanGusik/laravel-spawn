@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 class FrankenPhpServer implements ServerInterface
@@ -73,6 +74,8 @@ class FrankenPhpServer implements ServerInterface
                 $frankenResponse->setHeader('Content-Type', 'text/plain');
                 $frankenResponse->write(ServerError::body($e, $this->app));
                 $frankenResponse->end();
+            } finally {
+                TransactionSweep::afterRequest($this->app);
             }
         });
     }
