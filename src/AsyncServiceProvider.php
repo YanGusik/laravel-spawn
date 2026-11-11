@@ -17,6 +17,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerConfigAdapter();
         $this->registerEventDispatcherAdapter();
         $this->registerRouterAdapter();
+        $this->registerHttpKernelAdapter();
         $this->registerUrlGeneratorAdapter();
         $this->registerTranslatorAdapter();
         $this->registerSessionAdapter();
@@ -353,6 +354,35 @@ class AsyncServiceProvider extends ServiceProvider
         if ($this->app->resolved(\Illuminate\Contracts\Http\Kernel::class)) {
             $this->app->forgetInstance(\Illuminate\Contracts\Http\Kernel::class);
         }
+    }
+
+    /**
+     * Keep the HTTP kernel's request start time per request.
+     *
+     * An extender rather than a new binding: applications register the kernel as a class name
+     * the container wraps in a closure, so which class it is shows only once it is built.
+     * Laravel's stock kernel is replaced by AsyncHttpKernel; a kernel of the application's own
+     * that uses PerRequestStartTime is switched over; any other is left as it is, and the
+     * worker says so at start-up. Extenders run before afterResolving callbacks, so
+     * withMiddleware(), Inertia and this provider's own hook configure the kernel that serves.
+     */
+    private function registerHttpKernelAdapter(): void
+    {
+        if (! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        $this->app->extend(\Illuminate\Contracts\Http\Kernel::class, static function ($kernel, $app) {
+            if ($kernel::class === \Illuminate\Foundation\Http\Kernel::class) {
+                return new \Spawn\Laravel\Http\Kernel\AsyncHttpKernel($app, $app['router']);
+            }
+
+            if (in_array(\Spawn\Laravel\Http\Kernel\PerRequestStartTime::class, class_uses_recursive($kernel), true)) {
+                $kernel->keepRequestStartPerRequest();
+            }
+
+            return $kernel;
+        });
     }
 
     private function registerUrlGeneratorAdapter(): void

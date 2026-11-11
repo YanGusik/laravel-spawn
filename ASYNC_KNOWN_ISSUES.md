@@ -302,6 +302,16 @@ visibly; where none is named, nothing will notice the change but a reader.
    want `TrueAsyncServer`, which passes the extension's own upload objects through
    `UploadedFiles`.
 
+18. **An HTTP kernel of the application's own needs a trait for its request start time.**
+   The kernel is one object per worker, and Laravel keeps the start time of the request it is
+   handling in it. The package replaces Laravel's stock kernel with `AsyncHttpKernel`, which keeps
+   it per request; a kernel of the application's own (an `App\Http\Kernel` carried over from
+   Laravel 10) is the application's class, and only it can take
+   `use \Spawn\Laravel\Http\Kernel\PerRequestStartTime;`. Without the trait the worker says so at
+   start-up, and overlapping requests overwrite each other's start, so
+   `whenRequestLifecycleIsLongerThan()` handlers go missing. The rest of the kernel is worker-wide
+   configuration: `pushMiddleware()`, `appendMiddlewareToGroup()` and the like called during a
+   request change it for every later request of the worker.
 
 ---
 
