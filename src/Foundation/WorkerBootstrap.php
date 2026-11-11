@@ -52,6 +52,7 @@ final class WorkerBootstrap
         self::completeBoot($app);
 
         self::reportEloquentOverrides();
+        self::reportHttpKernel($app);
 
         if ($app instanceof AsyncApplication) {
             $app->enableAsyncMode();
@@ -73,6 +74,30 @@ final class WorkerBootstrap
 
         fwrite(STDERR, '[async] Eloquent is not coroutine-safe in this worker: '
             .EloquentOverrides::status()."\n");
+    }
+
+    /**
+     * Name a kernel of the application's own that keeps the request's start time in itself.
+     *
+     * Laravel's stock kernel is replaced with one that keeps it per request; a subclass is the
+     * application's, and only it can take the trait. Without it, overlapping requests overwrite
+     * each other's start and `whenRequestLifecycleIsLongerThan()` handlers go missing.
+     */
+    private static function reportHttpKernel(Application $app): void
+    {
+        if (! $app->bound(\Illuminate\Contracts\Http\Kernel::class)) {
+            return;
+        }
+
+        $kernel = $app->make(\Illuminate\Contracts\Http\Kernel::class);
+
+        if (! $kernel instanceof \Illuminate\Foundation\Http\Kernel
+            || in_array(\Spawn\Laravel\Http\Kernel\PerRequestStartTime::class, class_uses_recursive($kernel), true)) {
+            return;
+        }
+
+        fwrite(STDERR, '[async] '.$kernel::class.' keeps the request start time in itself, and overlapping '
+            .'requests overwrite it: add `use \\Spawn\\Laravel\\Http\\Kernel\\PerRequestStartTime;` to it'."\n");
     }
 
     /**
