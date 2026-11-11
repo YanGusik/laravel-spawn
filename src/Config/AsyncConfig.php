@@ -13,14 +13,21 @@ use function Async\root_context;
  * Coroutine-safe Config Repository.
  *
  * Before bootCompleted(): behaves like stock Repository (writes to $items).
- * After bootCompleted(): set() writes to the request's own overlay in RequestContext.
- * get() checks overlay first, then falls through to base $items.
+ * After bootCompleted(): the first set() of a request copies the base $items into the
+ * request's context and every write and read of that request goes to the copy, so a write
+ * means exactly what it means to the stock Repository: setting a list replaces the list,
+ * setting [] empties it. PHP copies an array on write, so the copy duplicates only the arrays
+ * on the paths the request wrote. A request that never writes reads the base $items.
  *
  * Base $items are immutable after boot — shared read-only across all coroutines.
  */
 class AsyncConfig extends Repository
 {
-    /** One key for the whole class: an overlay left in a long-lived context answers for every instance. */
+    /**
+     * One key for the whole class: an overlay left in a long-lived context answers for every
+     * instance. The value is the request's copy of the items, or false where a context drops
+     * the copy it would inherit.
+     */
     private const CTX_KEY = 'config.overlay';
 
     private bool $async = false;
@@ -40,7 +47,19 @@ class AsyncConfig extends Repository
      */
     public static function forgetOverlay(Context $ctx): void
     {
-        $ctx->set(self::CTX_KEY, [], replace: true);
+        $ctx->set(self::CTX_KEY, false, replace: true);
+    }
+
+    /**
+     * The items the current request reads: its own copy once it has written, the base before.
+     *
+     * @return array<string, mixed>
+     */
+    private function currentItems(): array
+    {
+        $overlay = RequestContext::current()->find(self::CTX_KEY);
+
+        return is_array($overlay) ? $overlay : $this->items;
     }
 
     public function set($key, $value = null)
@@ -51,7 +70,7 @@ class AsyncConfig extends Repository
         }
 
         $ctx = RequestContext::current();
-        $overlay = $ctx->find(self::CTX_KEY) ?? [];
+        $overlay = $this->currentItems();
 
         $keys = is_array($key) ? $key : [$key => $value];
 
@@ -77,20 +96,7 @@ class AsyncConfig extends Repository
             return $this->getMany($key);
         }
 
-        $overlay = RequestContext::current()->find(self::CTX_KEY);
-
-        if ($overlay !== null && Arr::has($overlay, $key)) {
-            $base = Arr::get($this->items, $key);
-            $override = Arr::get($overlay, $key);
-
-            if (is_array($base) && is_array($override)) {
-                return array_replace_recursive($base, $override);
-            }
-
-            return $override;
-        }
-
-        return Arr::get($this->items, $key, $default);
+        return Arr::get($this->currentItems(), $key, $default);
     }
 
     public function getMany($keys)
@@ -114,13 +120,7 @@ class AsyncConfig extends Repository
             return parent::has($key);
         }
 
-        $overlay = RequestContext::current()->find(self::CTX_KEY);
-
-        if ($overlay !== null && Arr::has($overlay, $key)) {
-            return true;
-        }
-
-        return Arr::has($this->items, $key);
+        return Arr::has($this->currentItems(), $key);
     }
 
     public function all()
@@ -129,9 +129,7 @@ class AsyncConfig extends Repository
             return parent::all();
         }
 
-        $overlay = RequestContext::current()->find(self::CTX_KEY) ?? [];
-
-        return array_replace_recursive($this->items, $overlay);
+        return $this->currentItems();
     }
 
     /**

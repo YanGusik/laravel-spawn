@@ -159,4 +159,84 @@ class ConfigIsolationTest extends AsyncTestCase
         $config->set('app.locale', 'ja');
         $this->assertEquals('ja', $config->get('app.locale'));
     }
+
+    private function asyncConfigWithLists(): \Spawn\Laravel\Config\AsyncConfig
+    {
+        $config = new \Spawn\Laravel\Config\AsyncConfig([
+            'app' => [
+                'providers' => ['A', 'B', 'C'],
+                'options' => ['k1' => 'v1', 'k2' => 'v2'],
+                'nested' => ['x' => 1, 'y' => 2],
+            ],
+        ]);
+        $config->bootCompleted();
+
+        return $config;
+    }
+
+    public function test_async_config_replaces_a_list_with_a_shorter_one(): void
+    {
+        $config = $this->asyncConfigWithLists();
+
+        $results = $this->runParallel([
+            'a' => function () use ($config) {
+                $config->set('app.providers', ['Only']);
+
+                return [$config->get('app.providers'), $config->all()['app']['providers']];
+            },
+        ]);
+
+        $this->assertSame([['Only'], ['Only']], $results['a']);
+    }
+
+    public function test_async_config_empties_an_array(): void
+    {
+        $config = $this->asyncConfigWithLists();
+
+        $results = $this->runParallel([
+            'a' => function () use ($config) {
+                $config->set('app.options', []);
+
+                return [$config->get('app.options'), $config->all()['app']['options']];
+            },
+        ]);
+
+        $this->assertSame([[], []], $results['a']);
+    }
+
+    public function test_async_config_partial_nested_write_keeps_its_siblings(): void
+    {
+        $config = $this->asyncConfigWithLists();
+
+        $results = $this->runParallel([
+            'a' => function () use ($config) {
+                $config->set('app.nested.x', 9);
+
+                return $config->get('app.nested');
+            },
+            'b' => function () use ($config) {
+                delay(20);
+
+                return $config->get('app.nested');
+            },
+        ]);
+
+        $this->assertSame(['x' => 9, 'y' => 2], $results['a']);
+        $this->assertSame(['x' => 1, 'y' => 2], $results['b'], 'a sibling request reads the base');
+    }
+
+    public function test_async_config_has_answers_true_for_a_key_set_to_null(): void
+    {
+        $config = $this->asyncConfigWithLists();
+
+        $results = $this->runParallel([
+            'a' => function () use ($config) {
+                $config->set('app.missing', null);
+
+                return $config->has('app.missing');
+            },
+        ]);
+
+        $this->assertTrue($results['a']);
+    }
 }
