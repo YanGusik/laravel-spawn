@@ -331,8 +331,9 @@ each will surprise somebody:
 
 `makeWith()` with parameters and `instance()` are handled: parameters bypass the context,
 and an explicit `instance()` outranks scoping. Called inside a request for a scoped alias,
-`instance()` replaces it for that request alone and runs no rebinding callbacks; called outside
-any request, it replaces it for everybody. A shared alias replaced inside a request stays shared,
+`instance()` replaces it for that request alone and runs no rebinding callbacks, and so does
+`Facade::swap()`, whose write to the facade cache is put back to the per-request proxy; called
+outside any request, either replaces it for everybody. A shared alias replaced inside a request stays shared,
 and `async.diagnostics` reports it.
 
 ---

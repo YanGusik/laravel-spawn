@@ -296,6 +296,14 @@ class AsyncApplication extends Application
         if ($key !== null) {
             $context->set($key, $instance, replace: true);
 
+            // Facade::swap() has just written this object into the facade cache, which is one
+            // array for the worker; the proxy goes back, and answers from this request's context.
+            $facadeKey = is_string($abstract) ? $abstract : $alias;
+
+            if (! FacadeCache::holdsProxy($facadeKey)) {
+                FacadeCache::put($facadeKey, new ScopedServiceProxy(fn () => $this->make($alias)));
+            }
+
             return $instance;
         }
 
