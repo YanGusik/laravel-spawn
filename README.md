@@ -546,8 +546,8 @@ covered, including the ones that come from other packages.
 
 The copies live in `overrides/laravel-13/<release>/`, beside the one this package already keeps for
 Telescope, one per upstream variant of each file, and each is frozen against the checksum of the Laravel
-file it was taken from. The variants cover Laravel 13.26.1, the floor of the `^13.26.1` that `composer.json`
-requires, to 13.42.0. A release that moves a file to a variant no copy was taken from leaves
+file it was taken from. The variants cover Laravel 13.26.1 to 13.42.0, which includes the floor of the
+`^13.30.0` that `composer.json` requires. A release that moves a file to a variant no copy was taken from leaves
 the application on Laravel's own classes rather than on a copy that has fallen behind; the
 worker writes the reason to stderr at start-up, and `EloquentOverrides::status()` answers it at
 any time. `SPAWN_ELOQUENT_OVERRIDES=0` switches the copies off.

@@ -211,7 +211,7 @@ visibly; where none is named, nothing will notice the change but a reader.
    the application has: a copy is never put over a variant it was not taken from, because the
    variant can carry a method the copy would take away (`Relation::clone()`, 13.38.0). The
    variants copied cover every Laravel 13 from 13.26.1 to 13.42.0, and `composer.json` requires
-   `^13.26.1`: a newer 13 installs, and one that moves a copied file is reported at start-up
+   `^13.30.0`, the oldest 13 without a published security advisory: a newer 13 installs, and one that moves a copied file is reported at start-up
    rather than refused by composer. The churn is real rather than
    theoretical: `Relation` gained `withConstraints()` and a second flag between 13.2.0 and
    13.26.1, and the CI of this branch went red on exactly that. CI runs the suite against the

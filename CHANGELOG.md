@@ -52,6 +52,7 @@
 - Facade roots the container does not register were rebuilt on every call once async mode switched facade caching off (#30), so `Http::globalMiddleware()` and `Process::preventStrayProcesses()` configured an object nobody read again. Async mode registers such a root as a singleton
 
 ### Changed
+- The package requires `laravel/framework` `^13.30.0` instead of `^13.26.1`: Packagist marks every Laravel 13 before 13.30.0 with security advisories (`PKSA-b41t-wbzk-9q51`, `PKSA-4hy6-m98j-dz9f`, `PKSA-d5tc-s1qs-h781`), and composer refuses to install them.
 - `AsyncViewFactory` keeps the render state of the context it last saw, so a `@foreach` stops asking the context on every property access: 785 to 668 microseconds per render at 500 rows a page (`tests/bench/bench_render.php`, release build, median of eleven runs)
 - `perRequestKey()` stops re-reading `config('async.scoped_services')` once async mode is on. With the shipped default of an empty list the read fired on every resolve that was not per-request
 

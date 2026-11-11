@@ -16,10 +16,10 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # The floor is the release the Eloquent copies were taken from, the same value as
-        # composer.json's; the other job is whatever composer resolves today, transitive
-        # dependencies included.
-        laravel: ["13.26.1", "^13.0"]
+        # The floor is composer.json's: the oldest Laravel 13 without a published security
+        # advisory, which composer still installs. The other job is whatever composer
+        # resolves today, transitive dependencies included.
+        laravel: ["13.30.0", "^13.0"]
     steps:
       - uses: actions/checkout@v4
 
