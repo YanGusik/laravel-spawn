@@ -80,7 +80,6 @@ class PermissionRegistrarIsolationTest extends AsyncTestCase
 
         // Pre-load a fake permissions collection into the registrar
         $reflection = new \ReflectionProperty($registrar, 'permissions');
-        $reflection->setAccessible(true);
         $fakePermissions = new Collection(['fake-permission']);
         $reflection->setValue($registrar, $fakePermissions);
 
@@ -151,7 +150,6 @@ class PermissionRegistrarIsolationTest extends AsyncTestCase
 
         // Pre-load a fake permissions collection
         $reflection = new \ReflectionProperty($registrar, 'permissions');
-        $reflection->setAccessible(true);
         $fakePermissions = new Collection(['fake-permission']);
         $reflection->setValue($registrar, $fakePermissions);
 

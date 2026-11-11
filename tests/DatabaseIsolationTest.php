@@ -126,14 +126,12 @@ class DatabaseIsolationTest extends AsyncTestCase
                 $this->assertInstanceOf(AsyncDatabaseSessionHandler::class, $handler);
                 // Access the connection via reflection
                 $ref = new \ReflectionProperty(\Illuminate\Session\DatabaseSessionHandler::class, 'connection');
-                $ref->setAccessible(true);
                 return spl_object_id($ref->getValue($handler));
             },
             'b' => function () use ($app) {
                 $handler = $app->make('session')->driver('database')->getHandler();
                 $this->assertInstanceOf(AsyncDatabaseSessionHandler::class, $handler);
                 $ref = new \ReflectionProperty(\Illuminate\Session\DatabaseSessionHandler::class, 'connection');
-                $ref->setAccessible(true);
                 return spl_object_id($ref->getValue($handler));
             },
         ]);
