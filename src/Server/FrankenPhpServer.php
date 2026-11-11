@@ -50,6 +50,11 @@ class FrankenPhpServer implements ServerInterface
             && method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor');
 
         FrankenHttpServer::onRequest(function (FrankenRequest $frankenRequest, FrankenResponse $frankenResponse) use ($telescopeEnabled) {
+            // Whether the runtime gives each request a scope of its own is not known here; begin()
+            // marks whatever scope this coroutine runs in, and a request scope, if there is one,
+            // still answers first.
+            RequestContext::begin();
+
             try {
                 $request = $this->buildRequest($frankenRequest);
 

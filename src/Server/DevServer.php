@@ -94,6 +94,9 @@ class DevServer implements ServerInterface
 
     private function handleConnection(mixed $client, Scope $requestScope): void
     {
+        // This coroutine runs in the request's own scope; the extension assigns no request scope here.
+        RequestContext::begin();
+
         try {
             $raw = $this->readRaw($client);
 

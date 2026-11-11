@@ -25,7 +25,10 @@ final class RequestLogContext
      */
     public static function all(): array
     {
-        return RequestContext::current()->findLocal(self::KEY) ?? [];
+        $context = RequestContext::current();
+
+        // Outside a request a nested scope inherits what the scopes above it set.
+        return (RequestContext::inRequest() ? $context->findLocal(self::KEY) : $context->find(self::KEY)) ?? [];
     }
 
     /**
