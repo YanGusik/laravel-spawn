@@ -200,7 +200,17 @@ class FrankenPhpServer implements ServerInterface
             $frankenResponse->addHeader('Set-Cookie', (string) $cookie);
         }
 
-        $frankenResponse->write((string) $response->getContent());
+        $content = $response->getContent();
+
+        if ($content !== false) {
+            $frankenResponse->write($content);
+        } else {
+            // A StreamedResponse or a BinaryFileResponse writes its own body.
+            StreamedBody::forward($response, static function (string $chunk) use ($frankenResponse): void {
+                $frankenResponse->write($chunk);
+            });
+        }
+
         $frankenResponse->end();
     }
 }

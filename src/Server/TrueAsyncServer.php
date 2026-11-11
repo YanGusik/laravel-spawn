@@ -23,8 +23,6 @@ use function Async\spawn;
 
 class TrueAsyncServer implements ServerInterface
 {
-    private const STREAM_CHUNK_BYTES = 65536;
-
     public function __construct(private $autoloadPath, private $bootstrapPath, private readonly array $options = [])
     {
     }
@@ -516,51 +514,14 @@ class TrueAsyncServer implements ServerInterface
             $taResponse->setNoCompression();
         }
 
-        $peerGone   = false;
-        $discarding = false;
-
-        /* A handler that returns no value counts as failed: PHP disables it and writes the
-         * pending chunk to the worker's own output. It also runs on a discard, where dropping
-         * the return value is not enough, so both the caller's ob_clean() and this method's
-         * own unwind have to be recognised and answered with silence. */
-        $sink = static function (string $chunk, int $phase) use ($taResponse, &$peerGone, &$discarding): string {
-            if ($chunk === '' || $peerGone || $discarding || ($phase & PHP_OUTPUT_HANDLER_CLEAN) !== 0) {
-                return '';
-            }
-
-            try {
+        $delivered = StreamedBody::forward(
+            $response,
+            static function (string $chunk) use ($taResponse): void {
                 $taResponse->write($chunk);
-            } catch (\Throwable) {
-                $peerGone = true;
             }
+        );
 
-            return '';
-        };
-
-        // Streaming code often opens with `while (ob_get_level()) ob_end_flush()`, this handler included.
-        $outerLevel = ob_get_level();
-
-        if (!ob_start($sink, self::STREAM_CHUNK_BYTES)) {
-            throw new \RuntimeException('Output buffering is unavailable, the response body cannot be forwarded');
-        }
-
-        try {
-            $response->sendContent();
-        } catch (\Throwable $e) {
-            $discarding = true;
-
-            while (ob_get_level() > $outerLevel) {
-                ob_end_clean();
-            }
-
-            throw $e;
-        }
-
-        while (ob_get_level() > $outerLevel) {
-            ob_end_flush();
-        }
-
-        if ($peerGone) {
+        if (! $delivered) {
             return;
         }
 
