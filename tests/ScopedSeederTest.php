@@ -130,6 +130,38 @@ class ScopedSeederTest extends AsyncTestCase
         $this->assertNotNull($results['a'], 'a closure in scopedInstances must not take the worker down');
     }
 
+    public function test_a_scoped_binding_given_as_a_closure_is_resolved_per_coroutine(): void
+    {
+        $app = $this->container([]);
+        $app->scoped(fn (): Widget => new Widget());
+
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => fn () => [$app->make(Widget::class), $app->make(Widget::class)],
+            'b' => fn () => $app->make(Widget::class),
+        ]);
+
+        $this->assertSame($results['a'][0], $results['a'][1], 'one object within a request');
+        $this->assertNotSame($results['a'][0], $results['b'], 'the return type names a per-request service');
+    }
+
+    public function test_a_closure_with_a_union_return_type_marks_every_type_per_coroutine(): void
+    {
+        $app = $this->container([]);
+        $app->scoped(fn (): Widget|Gadget => new Widget());
+
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => fn () => [$app->make(Widget::class), $app->make(Gadget::class)],
+            'b' => fn () => [$app->make(Widget::class), $app->make(Gadget::class)],
+        ]);
+
+        $this->assertNotSame($results['a'][0], $results['b'][0]);
+        $this->assertNotSame($results['a'][1], $results['b'][1]);
+    }
+
     public function test_a_service_replaced_with_instance_survives_a_later_extend(): void
     {
         $app = $this->container();
@@ -518,4 +550,8 @@ class DecoratedWidget extends Widget
     {
         parent::__construct('decorated');
     }
+}
+
+class Gadget
+{
 }

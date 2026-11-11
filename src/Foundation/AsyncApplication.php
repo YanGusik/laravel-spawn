@@ -936,10 +936,12 @@ class AsyncApplication extends Application
         $this->scopedInstancesSeen = count($this->scopedInstances);
 
         foreach ($this->scopedInstances as $scoped) {
-            // scoped() also accepts a closure, whose return types name the services;
-            // those are left out rather than guessed at, and stay shared.
-            if (is_string($scoped)) {
-                $this->markPerRequest($scoped);
+            // scoped() also accepts a closure, whose return types name the services, the
+            // same reading Container::forgetScopedInstances() gives it.
+            $abstracts = $scoped instanceof Closure ? $this->closureReturnTypes($scoped) : [$scoped];
+
+            foreach ($abstracts as $abstract) {
+                $this->markPerRequest($abstract);
             }
         }
     }
