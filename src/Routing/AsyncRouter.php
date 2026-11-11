@@ -36,7 +36,7 @@ class AsyncRouter extends Router
     {
         if ($this->async) {
             $ctx = RequestContext::current();
-            $ctx->set(self::CTX_CURRENT_REQUEST, $request);
+            $ctx->set(self::CTX_CURRENT_REQUEST, $request, replace: true);
         } else {
             $this->currentRequest = $request;
         }
@@ -56,7 +56,7 @@ class AsyncRouter extends Router
              * own copy before anything can yield. */
             $route = clone $route;
 
-            RequestContext::current()->set(self::CTX_CURRENT_ROUTE, $route);
+            RequestContext::current()->set(self::CTX_CURRENT_ROUTE, $route, replace: true);
         } else {
             $this->current = $route;
         }

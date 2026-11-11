@@ -93,4 +93,25 @@ class RouterIsolationTest extends AsyncTestCase
         $this->assertEquals('/slow', $results['a'], 'A must see its own request');
         $this->assertEquals('/fast', $results['b'], 'B must see its own request');
     }
+
+    /**
+     * A second dispatch in one request (an internal sub-request, an error page routed again)
+     * replaces the current route and request, as the stock router replaces its properties.
+     */
+    public function test_a_second_dispatch_in_one_request_replaces_the_current_route(): void
+    {
+        $router = $this->makeRouter(AsyncRouter::class);
+        $router->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($router) {
+                $router->dispatch(Request::create('/slow'));
+                $router->dispatch(Request::create('/fast'));
+
+                return [$router->current()?->getName(), $router->getCurrentRequest()?->getPathInfo()];
+            },
+        ]);
+
+        $this->assertSame(['fast', '/fast'], $results['a']);
+    }
 }
