@@ -22,10 +22,15 @@ trait PerRequestStartTime
 {
     /**
      * Route `$requestStartedAt` through the request's context from now on. Called once, after
-     * construction; the package calls it on a kernel that uses this trait.
+     * construction; the package calls it on a kernel that uses this trait. Without the
+     * true_async extension there are no request contexts, and the property stays the kernel's.
      */
     public function keepRequestStartPerRequest(): void
     {
+        if (! function_exists('Async\\request_context')) {
+            return;
+        }
+
         unset($this->requestStartedAt);
     }
 
