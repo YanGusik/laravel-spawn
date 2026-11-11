@@ -207,3 +207,16 @@ $router->get('/framing/discard', fn () => response()->stream(function () {
     ob_clean();
     echo 'KEPT';
 }, 200, ['Content-Type' => 'text/plain']));
+
+// Request-conversion probe (RequestConversionE2ETest, TrueAsyncServer only): what the
+// Laravel request was built from. TrueAsync\HttpRequest has a private constructor, so the
+// conversion is only observable through a genuine server.
+$router->get('/echo-request', fn (Illuminate\Http\Request $request) => response()->json([
+    'ip' => $request->ip(),
+    'remote_addr' => $request->server('REMOTE_ADDR'),
+    'remote_port' => $request->server('REMOTE_PORT'),
+    'query_string' => $request->server('QUERY_STRING'),
+    'server_name' => $request->server('SERVER_NAME'),
+    'server_port' => $request->server('SERVER_PORT'),
+    'cookies' => $request->cookies->all(),
+]));

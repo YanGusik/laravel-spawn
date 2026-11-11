@@ -344,10 +344,17 @@ class TrueAsyncServer implements ServerInterface
             'DOCUMENT_URI'    => $path,
             'SCRIPT_NAME'     => '',
             'SCRIPT_FILENAME' => '',
-            'REMOTE_ADDR'     => '127.0.0.1',
+            // The peer of the socket; a Unix-socket listener has none, and loopback stands in.
+            'REMOTE_ADDR'     => $request->getRemoteAddress() ?? '127.0.0.1',
             'CONTENT_TYPE'    => $request->getContentType() ?? '',
             'CONTENT_LENGTH'  => $request->getContentLength() ?? '',
         ];
+
+        $remotePort = $request->getRemotePort();
+
+        if ($remotePort !== null) {
+            $server['REMOTE_PORT'] = $remotePort;
+        }
 
         if ($request->hasHeader('host')) {
             $server['HTTP_HOST'] = $request->getHeader('host');
