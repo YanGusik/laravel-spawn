@@ -27,13 +27,17 @@ class RequestParser
 
         parse_str($queryString, $query);
 
+        // Header names are case-insensitive; lookups go through the lower-cased ones.
+        $lower = array_change_key_case($headers, CASE_LOWER);
+        [$serverName, $serverPort] = HostHeader::split($lower['host'] ?? '');
+
         $server = [
             'REQUEST_METHOD'  => strtoupper($method),
             'REQUEST_URI'     => $uri,
             'QUERY_STRING'    => $queryString,
-            'HTTP_HOST'       => $headers['Host'] ?? 'localhost',
-            'SERVER_NAME'     => 'localhost',
-            'SERVER_PORT'     => '8080',
+            'HTTP_HOST'       => $lower['host'] ?? 'localhost',
+            'SERVER_NAME'     => $serverName !== '' ? $serverName : 'localhost',
+            'SERVER_PORT'     => (string) ($serverPort ?? 8080),
             'SERVER_PROTOCOL' => 'HTTP/1.1',
             'REMOTE_ADDR'     => $remoteAddr,
         ];
@@ -43,20 +47,20 @@ class RequestParser
             $server[$key] = $value;
         }
 
-        if (isset($headers['Content-Type'])) {
-            $server['CONTENT_TYPE'] = $headers['Content-Type'];
+        if (isset($lower['content-type'])) {
+            $server['CONTENT_TYPE'] = $lower['content-type'];
         }
 
-        if (isset($headers['Content-Length'])) {
-            $server['CONTENT_LENGTH'] = $headers['Content-Length'];
+        if (isset($lower['content-length'])) {
+            $server['CONTENT_LENGTH'] = $lower['content-length'];
         }
 
         $post = [];
-        if (str_contains($headers['Content-Type'] ?? '', 'application/x-www-form-urlencoded')) {
+        if (str_contains($lower['content-type'] ?? '', 'application/x-www-form-urlencoded')) {
             parse_str($body, $post);
         }
 
-        $cookies = CookieHeader::parse($headers['Cookie'] ?? '');
+        $cookies = CookieHeader::parse($lower['cookie'] ?? '');
 
         $request = new Request($query, $post, [], $cookies, [], $server, $body);
         $request->setMethod($server['REQUEST_METHOD']);

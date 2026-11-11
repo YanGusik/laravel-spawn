@@ -3,6 +3,7 @@
 ## [Unreleased]
 
 ### Fixed
+- `DevServer` dropped a form body sent with a lower-case `content-type` header, left `CONTENT_TYPE` and `CONTENT_LENGTH` unset for it, and answered `SERVER_NAME = localhost`, `SERVER_PORT = 8080` whatever `Host` said ([#81](https://github.com/YanGusik/laravel-spawn/issues/81), Issue 18). Header names are read case-insensitively, and the name and port come from `Host`.
 - A `Host: [::1]:8000` header gave `SERVER_NAME = '['` and `SERVER_PORT = 0` under `TrueAsyncServer` and `FrankenPhpServer` ([#81](https://github.com/YanGusik/laravel-spawn/issues/81), Issue 19), and FrankenPHP put an IPv6 peer into `REMOTE_ADDR` with its brackets. The host is split bracket-aware, and `REMOTE_ADDR` is a bare address.
 - `getPermissionsTeamId()` answered `null` in every request that had not set a team itself ([#81](https://github.com/YanGusik/laravel-spawn/issues/81), Issue 19), losing the team set at boot and whatever a custom `permission.team_resolver` answers. A request that sets none reads the resolver, and an explicit `null` still clears the team for that request.
 - `php artisan async:serve` served the first listener of `async.server.listeners` alone and dropped every other — a TLS, HTTP/2 or gRPC listener configured beside it never opened ([#81](https://github.com/YanGusik/laravel-spawn/issues/81), Issue 19). `--host` and `--port` override the first listener and the rest are passed as configured; `TrueAsyncServer` also starts without a `workers` option, with one worker.
