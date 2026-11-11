@@ -200,7 +200,7 @@ class TrueAsyncServer implements ServerInterface
         /* The extension parses incoming traceparent / tracestate headers and stamps each
          * request with the timings ServerMetrics::latency() reports. */
         $config->setTelemetryEnabled((bool) ($this->options['telemetry'] ?? false));
-        $config->setWorkers((int) ($this->options['workers']));
+        $config->setWorkers((int) ($this->options['workers'] ?? 1));
         $config->setLogSeverity(\TrueAsync\LogSeverity::INFO)
             ->setLogStream(STDERR);
 

@@ -27,21 +27,15 @@ class TrueAsyncServeCommand extends Command
         }
 
         $cfg     = config('async.server', []);
-        $host    = $this->option('host') ?? $cfg['listeners'][0]['host'] ?? '0.0.0.0';
-        $port    = (int) ($this->option('port') ?? $cfg['listeners'][0]['port'] ?? 8080);
         $workers = (int) ($this->option('workers') ?? $cfg['workers'] ?? 0);
         if ($workers <= 0) {
             $workers = \Async\available_parallelism();
         }
 
-        // Merge first listener with CLI overrides, preserve tls/protocol
-        $listener = array_merge($cfg['listeners'][0] ?? [], compact('host', 'port'));
+        $options = self::serverOptions($cfg, $this->option('host'), $this->option('port'), $workers);
+        $options['grpc_handlers'] = config('async.grpc_handlers', []);
 
-        $options = array_merge($cfg, [
-            'listeners'      => [$listener],
-            'workers'        => $workers,
-            'grpc_handlers'  => config('async.grpc_handlers', []),
-        ]);
+        ['host' => $host, 'port' => $port] = $options['listeners'][0];
 
         $this->info("Starting TrueAsync server with {$workers} workers on {$host}:{$port}");
 
@@ -52,5 +46,31 @@ class TrueAsyncServeCommand extends Command
         $server->start();
 
         return self::SUCCESS;
+    }
+
+    /**
+     * The server options for async.server and the command line.
+     *
+     * --host and --port override the first configured listener and keep its TLS and protocol;
+     * every further listener is passed as configured. With none configured the first is
+     * 0.0.0.0:8080.
+     *
+     * @param  array<string, mixed>  $config  async.server
+     * @param  string|null  $host  --host, or null when not given
+     * @param  string|null  $port  --port, or null when not given
+     * @param  int  $workers  the worker count already resolved, at least 1
+     * @return array<string, mixed>
+     */
+    public static function serverOptions(array $config, ?string $host, ?string $port, int $workers): array
+    {
+        $listeners = $config['listeners'] ?? [];
+        $first = $listeners[0] ?? [];
+
+        $listeners[0] = array_merge($first, [
+            'host' => $host ?? $first['host'] ?? '0.0.0.0',
+            'port' => (int) ($port ?? $first['port'] ?? 8080),
+        ]);
+
+        return array_merge($config, ['listeners' => array_values($listeners), 'workers' => $workers]);
     }
 }
