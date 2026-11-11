@@ -57,14 +57,21 @@ class AsyncRouter extends Router
             $route = clone $route;
 
             RequestContext::current()->set(self::CTX_CURRENT_ROUTE, $route, replace: true);
+
+            /* As the stock router does, so that a second dispatch in the request also replaces
+             * the Route a type-hint receives: inside a request instance() keeps it there. */
+            if ($this->container instanceof \Spawn\Laravel\Foundation\AsyncApplication
+                && RequestContext::current() !== \Async\root_context()) {
+                $this->container->instance(\Illuminate\Routing\Route::class, $route);
+            }
         } else {
             $this->current = $route;
         }
 
         $route->setContainer($this->container);
 
-        /* In async mode Route::class comes from the context instead: a container
-         * instance would be the shared state we just cloned away. */
+        /* In async mode Route::class comes from the context instead, put there above: a
+         * shared container instance would be the shared state we just cloned away. */
         if (! $this->async) {
             $this->container->instance(\Illuminate\Routing\Route::class, $route);
         }
