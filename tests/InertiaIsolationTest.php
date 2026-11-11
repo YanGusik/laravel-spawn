@@ -221,4 +221,72 @@ class InertiaIsolationTest extends AsyncTestCase
         $ref = new \ReflectionProperty($factory, 'rootView');
         $this->assertEquals('custom', $ref->getValue($factory));
     }
+
+    /** An Inertia Response reads the session it is built in. */
+    private function withSession(): void
+    {
+        app()->instance('session', new \Illuminate\Session\Store('test', new \Illuminate\Session\ArraySessionHandler(10)));
+    }
+
+    private static function encryptsHistory(\Inertia\Response $response): bool
+    {
+        return (fn () => $this->encryptHistory)->call($response);
+    }
+
+    private static function sharedPropsOf(\Inertia\Response $response): array
+    {
+        return (fn () => $this->sharedProps ?? $this->props)->call($response);
+    }
+
+    public function test_async_factory_keeps_what_boot_shared_and_configured(): void
+    {
+        $factory = $this->makeFactory(\Spawn\Laravel\Inertia\AsyncResponseFactory::class);
+        $factory->share('appName', 'Boot');
+        $factory->encryptHistory(true);
+        $factory->bootCompleted();
+        $this->withSession();
+
+        $results = $this->runParallel([
+            'a' => function () use ($factory) {
+                $factory->share('user', 'Ann');
+
+                return [$factory->getShared('appName'), $factory->getShared('user'), self::encryptsHistory($factory->render('Page'))];
+            },
+            'b' => fn () => [$factory->getShared('appName'), $factory->getShared('user')],
+        ]);
+
+        $this->assertSame(['Boot', 'Ann', true], $results['a']);
+        $this->assertSame(['Boot', null], $results['b']);
+    }
+
+    /**
+     * A version closure that suspends (the stock middleware hashes the manifest file) must not
+     * let a concurrent render's state into this render's Response.
+     */
+    public function test_async_factory_render_keeps_its_own_state_across_a_suspending_version(): void
+    {
+        $factory = $this->makeFactory(\Spawn\Laravel\Inertia\AsyncResponseFactory::class);
+        $factory->version(function () {
+            delay(30);
+
+            return 'v1';
+        });
+        $factory->bootCompleted();
+        $this->withSession();
+
+        $results = $this->runParallel([
+            'a' => function () use ($factory) {
+                $factory->encryptHistory(true);
+
+                return self::encryptsHistory($factory->render('A'));
+            },
+            'b' => function () use ($factory) {
+                delay(10);
+
+                return self::encryptsHistory($factory->render('B'));
+            },
+        ]);
+
+        $this->assertSame(['a' => true, 'b' => false], $results);
+    }
 }
