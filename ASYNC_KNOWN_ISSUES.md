@@ -313,7 +313,10 @@ each will surprise somebody:
   container's own rule and mutates only the instance.
 
 `makeWith()` with parameters and `instance()` are handled: parameters bypass the context,
-and an explicit `instance()` outranks scoping.
+and an explicit `instance()` outranks scoping. Called inside a request for a scoped alias,
+`instance()` replaces it for that request alone and runs no rebinding callbacks; called outside
+any request, it replaces it for everybody. A shared alias replaced inside a request stays shared,
+and `async.diagnostics` reports it.
 
 ---
 
