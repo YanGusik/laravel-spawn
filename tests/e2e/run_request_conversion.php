@@ -109,6 +109,14 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, $clie
 
     $check('query string: a request without one has an empty QUERY_STRING', ($seen['query_string'] ?? null) === '', $seen);
 
+    [$seen] = $get('/echo-request', ['Cookie: name=John%20Doe;sum=1+1']);
+
+    $check(
+        'cookies: values are decoded as PHP decodes them',
+        ($seen['cookies'] ?? null) === ['name' => 'John Doe', 'sum' => '1+1'],
+        $seen
+    );
+
     echo "\nE2E: {$pass} passed, {$fail} failed\n";
     $exitCode = $fail === 0 ? 0 : 1;
 

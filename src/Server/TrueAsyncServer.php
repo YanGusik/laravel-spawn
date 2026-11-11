@@ -568,21 +568,18 @@ class TrueAsyncServer implements ServerInterface
         $taResponse->end();
     }
 
+    /**
+     * The cookies as PHP would put them in $_COOKIE: the extension decodes them itself from
+     * server 0.18.0 on, and an older build leaves the header to CookieHeader.
+     *
+     * @return array<string, string|array>
+     */
     private function parseCookies(HttpRequest $request): array
     {
-        $header = $request->getHeader('cookie') ?? '';
-        if ($header === '') {
-            return [];
+        if (method_exists($request, 'getCookies')) {
+            return $request->getCookies();
         }
 
-        $cookies = [];
-        foreach (explode('; ', $header) as $pair) {
-            $parts = explode('=', $pair, 2);
-            if (count($parts) === 2) {
-                $cookies[trim($parts[0])] = trim($parts[1]);
-            }
-        }
-
-        return $cookies;
+        return CookieHeader::parse($request->getHeader('cookie') ?? '');
     }
 }

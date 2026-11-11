@@ -56,7 +56,9 @@ class RequestParser
             parse_str($body, $post);
         }
 
-        $request = new Request($query, $post, [], [], [], $server, $body);
+        $cookies = CookieHeader::parse($headers['Cookie'] ?? '');
+
+        $request = new Request($query, $post, [], $cookies, [], $server, $body);
         $request->setMethod($server['REQUEST_METHOD']);
 
         return $request;

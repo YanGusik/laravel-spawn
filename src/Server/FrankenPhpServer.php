@@ -158,17 +158,7 @@ class FrankenPhpServer implements ServerInterface
             $server['HTTP_HOST'] = $serverName . ':' . $serverPort;
         }
 
-        // Parse cookies from the Cookie header
-        $cookies = [];
-        $cookieHeader = $headers['COOKIE'] ?? '';
-        if ($cookieHeader !== '') {
-            foreach (explode('; ', $cookieHeader) as $pair) {
-                $parts = explode('=', $pair, 2);
-                if (count($parts) === 2) {
-                    $cookies[trim($parts[0])] = trim($parts[1]);
-                }
-            }
-        }
+        $cookies = CookieHeader::parse($headers['COOKIE'] ?? '');
 
         // Parse POST body for form submissions
         $postData    = [];
