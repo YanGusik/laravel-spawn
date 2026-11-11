@@ -215,6 +215,19 @@ class TrueAsyncServer implements ServerInterface
          * request with the timings ServerMetrics::latency() reports. */
         $config->setTelemetryEnabled((bool) ($this->options['telemetry'] ?? false));
         $config->setWorkers((int) ($this->options['workers'] ?? 1));
+
+        // Each limit is passed only when configured, so an unset one keeps the server's default.
+        if (($this->options['max_connections'] ?? null) !== null) {
+            $config->setMaxConnections((int) $this->options['max_connections']);
+        }
+
+        if (($this->options['max_inflight_requests'] ?? null) !== null) {
+            $config->setMaxInflightRequests((int) $this->options['max_inflight_requests']);
+        }
+
+        if (($this->options['backpressure_target_ms'] ?? null) !== null) {
+            $config->setBackpressureTargetMs((int) $this->options['backpressure_target_ms']);
+        }
         $config->setLogSeverity(\TrueAsync\LogSeverity::INFO)
             ->setLogStream(STDERR);
 
