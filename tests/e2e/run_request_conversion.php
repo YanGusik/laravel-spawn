@@ -98,6 +98,17 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, $clie
     $check('remote address: REMOTE_PORT is the client port', (int) ($seen['remote_port'] ?? 0) === $localPort, $seen);
     $check('remote address: a forged X-Forwarded-For does not change ip()', ($seen['ip'] ?? null) === $client, $seen);
 
+    // A signed URL hashes the query string as sent: re-encoding it from the parsed array
+    // turns %20 into +, ids[] into ids[0], ?flag into flag= and a.b into a_b.
+    $raw = 'ids[]=1&ids[]=2&name=a%20b~c&a.b=1&flag';
+    [$seen] = $get('/echo-request?' . $raw);
+
+    $check('query string: QUERY_STRING is the one the client sent', ($seen['query_string'] ?? null) === $raw, $seen);
+
+    [$seen] = $get('/echo-request');
+
+    $check('query string: a request without one has an empty QUERY_STRING', ($seen['query_string'] ?? null) === '', $seen);
+
     echo "\nE2E: {$pass} passed, {$fail} failed\n";
     $exitCode = $fail === 0 ? 0 : 1;
 

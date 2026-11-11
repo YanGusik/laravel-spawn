@@ -337,7 +337,8 @@ class TrueAsyncServer implements ServerInterface
             'REQUEST_METHOD'  => $method,
             'REQUEST_URI'     => $uri,
             'PATH_INFO'       => $path,
-            'QUERY_STRING'    => http_build_query($query),
+            // As sent, not rebuilt from getQuery(): a signed URL hashes these exact bytes.
+            'QUERY_STRING'    => explode('?', $uri, 2)[1] ?? '',
             'SERVER_PROTOCOL' => 'HTTP/'.$request->getHttpVersion(),
             'SERVER_NAME'     => $serverName,
             'SERVER_PORT'     => $serverPort,
