@@ -188,7 +188,8 @@ visibly; where none is named, nothing will notice the change but a reader.
    and `firebird` do not, which covers `sqlsrv` on most builds — and for a private
    in-memory SQLite database. Start-up puts the options on every configured connection
    without asking, so such a connection reports the refusal instead of quietly serving
-   one shared handle to every coroutine. Persistent connections are not supported under
+   one shared handle to every coroutine; a `:memory:` SQLite connection is named on stderr
+   at start-up, with `file:<name>?mode=memory&cache=shared` as the form the pool takes. Persistent connections are not supported under
    async serving in the first place: one connection shared across coroutines is the
    defect the pool exists to prevent.
 12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/<release>/` holds
@@ -294,6 +295,12 @@ visibly; where none is named, nothing will notice the change but a reader.
    on it fails with an `Error` naming that class. Per-connection configuration belongs in the
    factory: everything `mail.mailers.*` declares is applied to every connection the pool opens,
    and anything beyond that is what `Mail::extend('smtp', …)` is for.
+17. **`FrankenPhpServer` passes no uploaded files.** The FrankenPHP runtime hands a worker the
+   method, URI, headers and raw body of a request (`stubs/frankenphp.php`) and no parsed files,
+   so `$request->file()` is empty and a `multipart/form-data` upload is lost under it. It would
+   take either an API of the runtime or a multipart parser in this package; until then uploads
+   want `TrueAsyncServer`, which passes the extension's own upload objects through
+   `UploadedFiles`.
 
 
 ---
