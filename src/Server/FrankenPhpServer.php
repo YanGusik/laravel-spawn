@@ -55,6 +55,8 @@ class FrankenPhpServer implements ServerInterface
             // still answers first.
             RequestContext::begin();
 
+            $sending = false;
+
             try {
                 $request = $this->buildRequest($frankenRequest);
 
@@ -69,11 +71,29 @@ class FrankenPhpServer implements ServerInterface
                 $kernel = $this->app->make(Kernel::class);
                 $laravelResponse = $kernel->handle($request);
 
-                $this->sendResponse($frankenResponse, $laravelResponse);
+                $sending = true;
 
-                $kernel->terminate($request, $laravelResponse);
+                try {
+                    $this->sendResponse($frankenResponse, $laravelResponse);
+                } finally {
+                    // A stream that fails part way still owes the session its write and the
+                    // terminable middleware its run.
+                    $kernel->terminate($request, $laravelResponse);
+                }
             } catch (\Throwable $e) {
                 error_log('[async:franken] ' . $e::class . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
+
+                // Once the response is on its way, a status and a body of our own would only be
+                // appended to it: the client gets the stream as far as it went.
+                if ($sending) {
+                    try {
+                        $frankenResponse->end();
+                    } catch (\Throwable) {
+                        // The runtime already closed it; the failure above is the one logged.
+                    }
+
+                    return;
+                }
 
                 $frankenResponse->setStatus(500);
                 $frankenResponse->setHeader('Content-Type', 'text/plain');
