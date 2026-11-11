@@ -106,11 +106,10 @@ class FrankenPhpServer implements ServerInterface
         // Parse SERVER_NAME and SERVER_PORT from the Host header.
         // FrankenPHP/Caddy strips the port from the Host header before passing to PHP,
         // so fall back to APP_URL when no port is present in the Host header.
-        $hostHeader = $headers['HOST'] ?? 'localhost';
-        if (str_contains($hostHeader, ':')) {
-            [$serverName, $serverPort] = explode(':', $hostHeader, 2);
+        [$serverName, $hostPort] = HostHeader::split($headers['HOST'] ?? 'localhost');
+        if ($hostPort !== null) {
+            $serverPort = (string) $hostPort;
         } else {
-            $serverName = $hostHeader;
             $appUrl     = $this->app->make('config')->get('app.url', '');
             $appPort    = parse_url($appUrl, PHP_URL_PORT);
             $serverPort = $appPort ? (string) $appPort : '80';
@@ -122,7 +121,8 @@ class FrankenPhpServer implements ServerInterface
         $rawRemote  = $frankenRequest->getRemoteAddr();
         if ($rawRemote !== '') {
             if (($lastColon = strrpos($rawRemote, ':')) !== false) {
-                $remoteAddr = substr($rawRemote, 0, $lastColon);
+                // REMOTE_ADDR is a bare address: an IPv6 peer comes as "[::1]:port".
+                $remoteAddr = trim(substr($rawRemote, 0, $lastColon), '[]');
                 $remotePort = substr($rawRemote, $lastColon + 1);
             } else {
                 $remoteAddr = $rawRemote;

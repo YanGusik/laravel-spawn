@@ -321,9 +321,8 @@ class TrueAsyncServer implements ServerInterface
         $serverPort = 80;
         // TODO: refactoring
         if ($hostHeader !== '') {
-            $parts      = explode(':', $hostHeader);
-            $serverName = $parts[0];
-            $serverPort = isset($parts[1]) ? (int) $parts[1] : 80;
+            [$serverName, $port] = HostHeader::split($hostHeader);
+            $serverPort = $port ?? 80;
         }
 
         // TODO: refactoring and debug

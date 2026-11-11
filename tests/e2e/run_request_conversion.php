@@ -117,6 +117,14 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, $clie
         $seen
     );
 
+    [$seen] = $get('/echo-request', [], '[::1]:8000');
+
+    $check(
+        'host: an IPv6 Host header splits into its name and port',
+        ($seen['server_name'] ?? null) === '[::1]' && ($seen['server_port'] ?? null) === 8000,
+        $seen
+    );
+
     echo "\nE2E: {$pass} passed, {$fail} failed\n";
     $exitCode = $fail === 0 ? 0 : 1;
 
