@@ -300,14 +300,43 @@ class AsyncServiceProvider extends ServiceProvider
         }
 
         spl_autoload_register(function (string $class): void {
-            if ($class === 'Laravel\\Telescope\\Telescope') {
-                require __DIR__ . '/../overrides/Telescope.php';
-                // Enable per-coroutine recording immediately so that
-                // Telescope::start() (called during boot) knows to skip
-                // the handlingApprovedRequest() check that requires $app['request'].
-                \Laravel\Telescope\Telescope::enableAsyncRecording();
+            if ($class !== 'Laravel\\Telescope\\Telescope') {
+                return;
             }
+
+            $copy = \Spawn\Laravel\Telescope\TelescopeOverride::file(self::installedTelescopeFile());
+
+            if ($copy === null) {
+                // Composer's loader, next in line, loads Telescope's own class.
+                error_log('[async] Telescope recording is shared between coroutines in this worker: no copy '
+                    .'of this Telescope release is in the package; run bin/refresh-telescope-override.php');
+
+                return;
+            }
+
+            require $copy;
+            // Enable per-coroutine recording immediately so that
+            // Telescope::start() (called during boot) knows to skip
+            // the handlingApprovedRequest() check that requires $app['request'].
+            \Laravel\Telescope\Telescope::enableAsyncRecording();
         }, prepend: true);
+    }
+
+    /**
+     * Where Composer would load Laravel\\Telescope\\Telescope from, or null when no registered
+     * loader knows.
+     */
+    private static function installedTelescopeFile(): ?string
+    {
+        foreach (\Composer\Autoload\ClassLoader::getRegisteredLoaders() as $loader) {
+            $file = $loader->findFile('Laravel\\Telescope\\Telescope');
+
+            if (is_string($file)) {
+                return $file;
+            }
+        }
+
+        return null;
     }
 
     private function registerRouterAdapter(): void

@@ -8,7 +8,7 @@ parameters:
         # the objects the FrankenPHP runtime hands to a worker.
         - stubs/frankenphp.php
     ignoreErrors:
-        # AsyncServiceProvider swaps overrides/Telescope.php in for the installed Telescope
+        # AsyncServiceProvider swaps a copy under overrides/telescope-5/ in for the installed Telescope
         # through an autoloader of its own, and that copy carries CoroutineSafeRecording.
         # Analysis reads the installed class, where the method is not; a stub cannot help,
         # because stub files refine the types of members rather than add them.
