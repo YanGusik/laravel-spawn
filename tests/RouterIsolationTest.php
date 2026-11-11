@@ -114,4 +114,24 @@ class RouterIsolationTest extends AsyncTestCase
 
         $this->assertSame(['fast', '/fast'], $results['a']);
     }
+
+    public function test_a_second_dispatch_in_one_request_replaces_the_injected_route(): void
+    {
+        $app = new \Spawn\Laravel\Foundation\AsyncApplication(sys_get_temp_dir());
+        $app->instance('config', new \Illuminate\Config\Repository(['async' => ['scoped_services' => []]]));
+        $router = new AsyncRouter(new Dispatcher($app), $app);
+        $router->get('/slow', fn () => $app->make(Route::class)->uri());
+        $router->get('/fast', fn () => $app->make(Route::class)->uri());
+        $router->bootCompleted();
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => fn () => [
+                $router->dispatch(Request::create('/slow'))->getContent(),
+                $router->dispatch(Request::create('/fast'))->getContent(),
+            ],
+        ]);
+
+        $this->assertSame(['slow', 'fast'], $results['a']);
+    }
 }

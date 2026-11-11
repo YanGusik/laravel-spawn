@@ -121,20 +121,24 @@ class TrueAsyncServer implements ServerInterface
         \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
 
         $kernel = $app->make(Kernel::class);
-        $laravelResponse = $kernel->handle($request);
 
         try {
-            $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
-        } finally {
-            /* An aborted response still owes the session its write and the
-             * terminable middleware its run, and a failure of either must not
-             * take the place of the one that got us here. */
-            try {
-                $kernel->terminate($request, $laravelResponse);
-            } catch (\Throwable $terminateFailure) {
-                fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
-            }
+            $laravelResponse = $kernel->handle($request);
 
+            try {
+                $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
+            } finally {
+                /* An aborted response still owes the session its write and the
+                 * terminable middleware its run, and a failure of either must not
+                 * take the place of the one that got us here. */
+                try {
+                    $kernel->terminate($request, $laravelResponse);
+                } catch (\Throwable $terminateFailure) {
+                    fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
+                }
+            }
+        } finally {
+            // Also when handle() itself throws: its rendering failed, or a RequestHandled listener threw.
             TransactionSweep::afterRequest($app);
         }
     }

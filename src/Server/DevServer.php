@@ -124,9 +124,13 @@ class DevServer implements ServerInterface
             $kernel = $this->app->make(Kernel::class);
             $response = $kernel->handle($request);
 
-            ResponseEmitter::emit($client, $response);
-
-            $kernel->terminate($request, $response);
+            try {
+                ResponseEmitter::emit($client, $response);
+            } finally {
+                // A stream that fails part way still owes the session its write and the
+                // terminable middleware its run.
+                $kernel->terminate($request, $response);
+            }
         } finally {
             TransactionSweep::afterRequest($this->app);
             $requestScope->dispose();
