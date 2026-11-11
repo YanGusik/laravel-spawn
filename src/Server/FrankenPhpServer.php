@@ -47,7 +47,7 @@ class FrankenPhpServer implements ServerInterface
         // The pool initializes lazily on the first DB access inside a request coroutine.
 
         $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
-            && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
+            && method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor');
 
         FrankenHttpServer::onRequest(function (FrankenRequest $frankenRequest, FrankenResponse $frankenResponse) use ($telescopeEnabled) {
             try {
@@ -58,7 +58,7 @@ class FrankenPhpServer implements ServerInterface
                 \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
                 if ($telescopeEnabled) {
-                    \Laravel\Telescope\Telescope::startRecording(false);
+                    \Laravel\Telescope\Telescope::startRecordingFor($request);
                 }
 
                 $kernel = $this->app->make(Kernel::class);

@@ -147,6 +147,35 @@ class TelescopeIsolationTest extends AsyncTestCase
     }
 
     /**
+     * @return array<string, array{0: bool, 1: string, 2: bool}>
+     */
+    public static function recordingGates(): array
+    {
+        return [
+            'enabled, an ordinary path' => [true, '/orders', true],
+            'disabled' => [false, '/orders', false],
+            "enabled, Telescope's own polling" => [true, '/telescope-api/requests', false],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('recordingGates')]
+    public function test_a_request_is_recorded_only_when_telescope_would_record_it(bool $enabled, string $path, bool $expected): void
+    {
+        Telescope::enableAsyncRecording();
+        app()->instance('config', new \Illuminate\Config\Repository(['telescope' => ['enabled' => $enabled]]));
+        // startRecording() asks the cache whether recording is paused.
+        app()->instance('cache', new \Illuminate\Cache\Repository(new \Illuminate\Cache\ArrayStore()));
+
+        $results = $this->runParallel(['a' => function () use ($path) {
+            Telescope::startRecordingFor(\Illuminate\Http\Request::create($path));
+
+            return Telescope::isRecording();
+        }]);
+
+        $this->assertSame($expected, $results['a']);
+    }
+
+    /**
      * Upstream's store() drops the entries a batch filter rejects and still writes the updates
      * the request queued: they belong to entries stored by earlier requests.
      */

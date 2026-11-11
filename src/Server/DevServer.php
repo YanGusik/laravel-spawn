@@ -112,6 +112,12 @@ class DevServer implements ServerInterface
 
             \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
+            // Only the package's copy of Telescope records per request; Telescope's own class has
+            // no such method.
+            if (method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor')) {
+                \Laravel\Telescope\Telescope::startRecordingFor($request);
+            }
+
             $kernel = $this->app->make(Kernel::class);
             $response = $kernel->handle($request);
 

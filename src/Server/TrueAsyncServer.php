@@ -52,7 +52,7 @@ class TrueAsyncServer implements ServerInterface
             $this->registerShutdownSignals($server);
 
             $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
-                && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
+                && method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor');
 
             $server->addHttpHandler(function (HttpRequest $taRequest, HttpResponse $taResponse) use (
                 $telescopeEnabled,
@@ -107,7 +107,7 @@ class TrueAsyncServer implements ServerInterface
         RequestContext::current()->set(ScopedService::REQUEST, $request);
 
         if ($telescopeEnabled) {
-            \Laravel\Telescope\Telescope::startRecording(false);
+            \Laravel\Telescope\Telescope::startRecordingFor($request);
         }
 
         $app    = app();
