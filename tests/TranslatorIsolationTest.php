@@ -127,4 +127,71 @@ class TranslatorIsolationTest extends AsyncTestCase
         $this->assertEquals('ru', $translator->getLocale());
         $this->assertEquals('Добро пожаловать', $translator->get('messages.welcome'));
     }
+
+    /**
+     * @return array<string, array{0: string}>
+     */
+    public static function locales(): array
+    {
+        return [
+            'plain' => ['de'],
+            'region' => ['pt_BR'],
+            'slash' => ['en/x'],
+            'backslash' => ['en\\x'],
+            'parent directory' => ['..'],
+            'nul byte' => ["a\0b"],
+        ];
+    }
+
+    /**
+     * The adapter refuses exactly what the installed Laravel refuses, so a later upstream
+     * check reaches requests too.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('locales')]
+    public function test_async_translator_refuses_what_laravel_refuses(string $locale): void
+    {
+        $refusedBy = static function (Translator $translator) use ($locale): bool {
+            try {
+                $translator->setLocale($locale);
+
+                return false;
+            } catch (\InvalidArgumentException) {
+                return true;
+            }
+        };
+
+        $async = $this->makeTranslator(\Spawn\Laravel\Translation\AsyncTranslator::class);
+        $async->bootCompleted();
+
+        $results = $this->runParallel(['a' => fn () => $refusedBy($async)]);
+
+        $this->assertSame($refusedBy($this->makeTranslator()), $results['a']);
+        $this->assertSame('en', $async->getLocale(), 'a check leaves the worker locale alone');
+    }
+
+    public function test_async_translator_fallback_is_per_request(): void
+    {
+        $translator = $this->makeTranslator(\Spawn\Laravel\Translation\AsyncTranslator::class);
+        $translator->setFallback('en');
+        $translator->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($translator) {
+                $translator->setFallback('de');
+                $translator->setLocale('fr');
+                delay(100);
+
+                return [$translator->getFallback(), $translator->get('messages.welcome')];
+            },
+            'b' => function () use ($translator) {
+                delay(50);
+                $translator->setLocale('fr');
+
+                return [$translator->getFallback(), $translator->get('messages.welcome')];
+            },
+        ]);
+
+        $this->assertSame(['de', 'Willkommen'], $results['a']);
+        $this->assertSame(['en', 'Welcome'], $results['b']);
+    }
 }
