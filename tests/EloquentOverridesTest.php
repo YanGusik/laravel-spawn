@@ -97,17 +97,34 @@ class EloquentOverridesTest extends AsyncTestCase
     }
 
     /**
-     * The copies are frozen against the release they were taken from. When a Laravel update
-     * moves either file, this is where it is noticed — bring the copy forward by hand, take
-     * the new checksum, and check the two edits are still in it.
+     * Each copy is frozen against the variant of the Laravel file it was taken from. When a
+     * Laravel update moves a file to a variant no copy was taken from, this is where it is
+     * noticed: run bin/refresh-eloquent-overrides.php, add the checksum it prints, and check
+     * the edits are still in the new copy.
      */
     public function test_the_copies_still_match_the_laravel_files_behind_them(): void
     {
-        foreach (EloquentOverrides::frozenAgainst() as $class => [$file, $checksum]) {
+        foreach (EloquentOverrides::frozenAgainst() as $class => [$file, $checksums]) {
             $this->assertNotNull($file, "Laravel's own file for $class was not found");
-            $this->assertSame($checksum, hash_file('sha256', $file),
-                "Laravel's $class has moved on; the copy under overrides/ has to be brought forward");
+            $this->assertContains(hash_file('sha256', $file), $checksums,
+                "Laravel's $class has moved on; a copy of the new variant has to be taken under overrides/");
         }
+    }
+
+    public function test_every_variant_listed_has_its_copy_in_the_package(): void
+    {
+        foreach (EloquentOverrides::frozenAgainst() as $class => [, $checksums]) {
+            foreach ($checksums as $checksum) {
+                $this->assertNotNull(EloquentOverrides::copyFor($class, $checksum),
+                    "the copy of $class taken from the variant $checksum is missing from overrides/");
+            }
+        }
+    }
+
+    public function test_a_variant_no_copy_was_taken_from_has_no_copy(): void
+    {
+        $this->assertNull(EloquentOverrides::copyFor(Relation::class, str_repeat('0', 64)));
+        $this->assertNull(EloquentOverrides::copyFor('Illuminate\\Database\\Eloquent\\Model', str_repeat('0', 64)));
     }
 
     public function test_sibling_coroutine_keeps_its_where_clause(): void

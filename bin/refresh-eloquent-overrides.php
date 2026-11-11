@@ -1,12 +1,14 @@
 <?php
 
 /**
- * Take the copies under overrides/ from the installed Laravel again.
+ * Take a copy under overrides/ for each Eloquent file of the installed Laravel that has none.
  *
- * The four files this package puts in front of Eloquent are frozen against the release they
- * were copied from, and a release that touches one of them leaves the copies of its group on
- * Laravel's own classes. Bringing them forward is this script: it re-copies every file,
- * re-applies the edits, and prints the checksums to paste into EloquentOverrides.
+ * The four files this package puts in front of Eloquent are frozen against the variant of the
+ * Laravel file they were copied from, and a release that moves one of them leaves its group on
+ * Laravel's own classes until a copy of the new variant exists. Taking it is this script: it
+ * copies every file whose checksum no copy was taken from, re-applies the edits, writes the
+ * result under overrides/laravel-13/<installed release>/ and prints the lines to add to
+ * EloquentOverrides::GROUPS. A file that already has its copy is left as it is.
  *
  * It is a tool for whoever updates the package, not part of it — nothing at runtime runs it,
  * and its output is committed as plain files.
@@ -19,12 +21,22 @@
 
 $root = dirname(__DIR__);
 $eloquent = $root.'/vendor/laravel/framework/src/Illuminate/Database/Eloquent';
-$copies = $root.'/overrides/laravel-13/Illuminate/Database/Eloquent';
 
 if (! is_dir($eloquent)) {
     fwrite(STDERR, "Laravel is not installed under vendor/.\n");
     exit(1);
 }
+
+require $root.'/src/Database/Eloquent/EloquentOverrides.php';
+
+$application = file_get_contents($root.'/vendor/laravel/framework/src/Illuminate/Foundation/Application.php');
+
+if (! preg_match("/const VERSION = '([^']+)'/", $application, $version)) {
+    fwrite(STDERR, "The installed Laravel release could not be read from Application::VERSION.\n");
+    exit(1);
+}
+
+$release = $version[1];
 
 /**
  * @param  list<array{0: string, 1: string}>  $replacements
@@ -306,18 +318,33 @@ PHP,
     ],
 ], 'HasEvents');
 
-file_put_contents($copies.'/Relations/Relation.php', $relation);
-file_put_contents($copies.'/Concerns/HasRelationships.php', $hasRelationships);
-file_put_contents($copies.'/Concerns/GuardsAttributes.php', $guardsAttributes);
-file_put_contents($copies.'/Concerns/HasEvents.php', $hasEvents);
-
-echo "Copies rewritten. Put these into EloquentOverrides::COPIES:\n\n";
+$written = 0;
 
 foreach ([
-    'Relation' => $eloquent.'/Relations/Relation.php',
-    'HasRelationships' => $eloquent.'/Concerns/HasRelationships.php',
-    'GuardsAttributes' => $eloquent.'/Concerns/GuardsAttributes.php',
-    'HasEvents' => $eloquent.'/Concerns/HasEvents.php',
-] as $name => $file) {
-    printf("  %-18s %s\n", $name, hash_file('sha256', $file));
+    'Illuminate\Database\Eloquent\Relations\Relation' => ['Relations/Relation.php', $relation],
+    'Illuminate\Database\Eloquent\Concerns\HasRelationships' => ['Concerns/HasRelationships.php', $hasRelationships],
+    'Illuminate\Database\Eloquent\Concerns\GuardsAttributes' => ['Concerns/GuardsAttributes.php', $guardsAttributes],
+    'Illuminate\Database\Eloquent\Concerns\HasEvents' => ['Concerns/HasEvents.php', $hasEvents],
+] as $class => [$relative, $copy]) {
+    $checksum = hash_file('sha256', $eloquent.'/'.$relative);
+    $existing = Spawn\Laravel\Database\Eloquent\EloquentOverrides::copyFor($class, $checksum);
+
+    if ($existing !== null) {
+        echo "  $class: $existing already fits\n";
+
+        continue;
+    }
+
+    $target = $root.'/overrides/laravel-13/'.$release.'/'.str_replace('\\', '/', $class).'.php';
+
+    if (! is_dir(dirname($target))) {
+        mkdir(dirname($target), 0777, true);
+    }
+
+    file_put_contents($target, $copy);
+    $written++;
+
+    echo "  $class: written; add to EloquentOverrides::GROUPS:\n      '$checksum' => '$release',\n";
 }
+
+echo $written === 0 ? "\nEvery file of Laravel $release already has its copy.\n" : "\n";
