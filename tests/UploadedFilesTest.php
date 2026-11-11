@@ -87,14 +87,31 @@ class UploadedFilesTest extends TestCase
     }
 
     /**
+     * A filename with path components is saved under the part after the last separator, as PHP
+     * saves it: the upload is valid and its name carries no directory.
+     */
+    public function test_a_filename_with_path_components_is_saved_under_its_last_part(): void
+    {
+        $request = $this->requestWith([
+            ['name' => 'doc', 'filename' => '../../etc/passwd', 'type' => 'text/plain', 'body' => 'x'],
+        ]);
+
+        $file = $request->file('doc');
+
+        $this->assertInstanceOf(UploadedFile::class, $file);
+        $this->assertTrue($file->isValid());
+        $this->assertSame(UPLOAD_ERR_OK, $file->getError());
+        $this->assertSame('passwd', $file->getClientOriginalName());
+        $this->assertTrue($request->hasFile('doc'));
+    }
+
+    /**
      * A filename the parser refuses arrives as an invalid upload rather than as a fatal error.
-     * `getClientOriginalName()` strips the directory part; `getClientOriginalPath()` still
-     * returns the submitted name, traversal and all.
      */
     public function test_a_rejected_filename_yields_an_invalid_upload(): void
     {
         $request = $this->requestWith([
-            ['name' => 'bad', 'filename' => '../../etc/passwd', 'type' => 'text/plain', 'body' => 'x'],
+            ['name' => 'bad', 'filename' => str_repeat('a', 4097), 'type' => 'text/plain', 'body' => 'x'],
         ]);
 
         $file = $request->file('bad');
@@ -102,7 +119,6 @@ class UploadedFilesTest extends TestCase
         $this->assertInstanceOf(UploadedFile::class, $file);
         $this->assertFalse($file->isValid());
         $this->assertSame(UPLOAD_ERR_EXTENSION, $file->getError());
-        $this->assertSame('passwd', $file->getClientOriginalName());
         $this->assertFalse($request->hasFile('bad'));
     }
 
