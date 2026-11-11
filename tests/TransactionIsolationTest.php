@@ -208,6 +208,77 @@ class TransactionIsolationTest extends AsyncTestCase
         $this->assertEquals(1, $results['b'], 'B has own transaction level 1 (not nested into A)');
     }
 
+    // ── Two connections in one coroutine ─────────────────────────────────────
+
+    /**
+     * Each connection keeps a counter of its own: a coroutine that opens a transaction on a
+     * second database must send that one a BEGIN, not a SAVEPOINT on a link in autocommit.
+     */
+    public function test_two_connections_in_one_coroutine_each_begin_their_own(): void
+    {
+        $first = $this->makeMockConnection(AsyncMySqlConnection::class, null, ['name' => 'primary']);
+        $second = $this->makeMockConnection(AsyncMySqlConnection::class, null, ['name' => 'secondary']);
+        $first->bootCompleted();
+        $second->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($first, $second) {
+                $first->beginTransaction();
+                $second->beginTransaction();
+                $levels = [$first->transactionLevel(), $second->transactionLevel()];
+                $second->rollBack();
+                $first->commit();
+
+                return ['levels' => $levels, 'after' => [$first->transactionLevel(), $second->transactionLevel()]];
+            },
+        ]);
+
+        $this->assertSame([1, 1], $results['a']['levels']);
+        $this->assertSame([0, 0], $results['a']['after']);
+        $this->assertSame(['BEGIN', 'COMMIT'], $first->getPdo()->log);
+        $this->assertSame(['BEGIN', 'ROLLBACK'], $second->getPdo()->log);
+    }
+
+    public function test_two_connections_under_one_name_do_not_share_a_counter(): void
+    {
+        $first = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $second = $this->makeMockConnection(AsyncMySqlConnection::class);
+        $first->bootCompleted();
+        $second->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($first, $second) {
+                $first->beginTransaction();
+
+                return $second->transactionLevel();
+            },
+        ]);
+
+        $this->assertSame(0, $results['a']);
+    }
+
+    public function test_replacing_the_handle_of_one_connection_keeps_the_others_transaction(): void
+    {
+        $first = $this->makeMockConnection(AsyncMySqlConnection::class, null, ['name' => 'primary']);
+        $second = $this->makeMockConnection(AsyncMySqlConnection::class, null, ['name' => 'secondary']);
+        $first->bootCompleted();
+        $second->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($first, $second) {
+                $first->beginTransaction();
+                $second->setPdo($this->makeLoggingPdo());
+                $level = $first->transactionLevel();
+                $first->commit();
+
+                return $level;
+            },
+        ]);
+
+        $this->assertSame(1, $results['a']);
+        $this->assertSame(['BEGIN', 'COMMIT'], $first->getPdo()->log);
+    }
+
     // ── AsyncMySqlConnection in async app mode (no bootCompleted) ────────────
 
     /**
