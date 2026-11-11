@@ -11,7 +11,9 @@ use function Async\coroutine_context;
  * the shared Connection instance property.
  *
  * PDO Pool gives each coroutine its own physical connection,
- * so the transaction counter must also be per-coroutine.
+ * so the transaction counter must also be per-coroutine — and still per connection:
+ * the context entry is keyed by the Connection object itself. A name would not do: a
+ * connection may have none, two can share one, and a purged connection is replaced under it.
  *
  * Usage: `use CoroutineTransactions;` in a Connection subclass. If that subclass
  * inherits a transaction() of its own — SqlServerConnection has one — the trait's
@@ -32,8 +34,6 @@ use function Async\coroutine_context;
  */
 trait CoroutineTransactions
 {
-    private const CTX_TRANSACTIONS = 'db.transactions';
-
     /**
      * Forced async mode — used in tests when no AsyncApplication is available.
      * In production, async mode is detected via AsyncApplication::isAsyncModeEnabled().
@@ -59,7 +59,7 @@ trait CoroutineTransactions
     public function transactionLevel()
     {
         if ($this->isAsyncMode()) {
-            return coroutine_context()->find(self::CTX_TRANSACTIONS) ?? 0;
+            return coroutine_context()->find($this) ?? 0;
         }
 
         return $this->transactions;
@@ -68,11 +68,12 @@ trait CoroutineTransactions
     private function setTransactionLevel(int $level): void
     {
         if ($this->isAsyncMode()) {
-            $ctx = coroutine_context();
-            if ($ctx->find(self::CTX_TRANSACTIONS) === null) {
-                $ctx->set(self::CTX_TRANSACTIONS, $level);
+            // Level 0 removes the entry rather than storing a zero, so a coroutine that has
+            // finished its transactions holds no reference to the connection.
+            if ($level === 0) {
+                coroutine_context()->unset($this);
             } else {
-                $ctx->set(self::CTX_TRANSACTIONS, $level, replace: true);
+                coroutine_context()->set($this, $level, replace: true);
             }
         } else {
             $this->transactions = $level;

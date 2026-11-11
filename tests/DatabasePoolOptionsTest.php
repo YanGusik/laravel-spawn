@@ -83,4 +83,31 @@ class DatabasePoolOptionsTest extends AsyncTestCase
         $this->assertArrayHasKey(PDO::ATTR_POOL_ENABLED, $options);
         $this->assertTrue($options[PDO::ATTR_POOL_ENABLED]);
     }
+
+    public function test_a_private_in_memory_sqlite_connection_is_named_at_start_up(): void
+    {
+        $app = $this->appWithConfig([
+            'async' => ['db_pool' => ['enabled' => true]],
+            'database' => ['connections' => [
+                'memory' => ['driver' => 'sqlite', 'database' => ':memory:'],
+                'shared' => ['driver' => 'sqlite', 'database' => 'file:t?mode=memory&cache=shared'],
+            ]],
+        ]);
+
+        $log = tempnam(sys_get_temp_dir(), 'pool');
+        $previous = ini_set('error_log', $log);
+
+        try {
+            WorkerBootstrap::run($app);
+            $written = (string) file_get_contents($log);
+        } finally {
+            ini_set('error_log', (string) $previous);
+            unlink($log);
+        }
+
+        $this->assertStringContainsString("'memory'", $written);
+        $this->assertStringNotContainsString("'shared'", $written);
+        $this->assertNotEmpty($app->make('config')->get('database.connections.memory.options'),
+            'the pool options still go on: a shared handle is the defect the pool prevents');
+    }
 }

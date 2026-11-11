@@ -5,6 +5,7 @@ namespace Spawn\Laravel\Server;
 use Illuminate\Contracts\Foundation\Application;
 use Illuminate\Contracts\Http\Kernel;
 use Spawn\Laravel\Async\RawIo;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
@@ -23,8 +24,6 @@ use function Async\spawn;
 
 class TrueAsyncServer implements ServerInterface
 {
-    private const STREAM_CHUNK_BYTES = 65536;
-
     public function __construct(private $autoloadPath, private $bootstrapPath, private readonly array $options = [])
     {
     }
@@ -53,48 +52,17 @@ class TrueAsyncServer implements ServerInterface
             $this->registerShutdownSignals($server);
 
             $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
-                && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
+                && method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor');
 
             $server->addHttpHandler(function (HttpRequest $taRequest, HttpResponse $taResponse) use (
                 $telescopeEnabled,
                 $server
             ): void {
-                $taRequest->awaitBody();
-
-                $request = $this->convertRequest($taRequest);
-
-                RawIo::set($taRequest, $taResponse);
-                RequestContext::current()->set(ScopedService::REQUEST, $request);
-
-                if ($telescopeEnabled) {
-                    \Laravel\Telescope\Telescope::startRecording(false);
-                }
-
-                $app    = app();
-
-                /* This closure is the only place holding both the worker's server object
-                 * and the worker's container, so a controller reaching for ServerMetrics
-                 * depends on this line. It runs per request rather than once because a
-                 * `use (&$bound)` flag cannot be transferred into a worker thread. */
-                $app->make(ServerMetrics::class)->useServer($server);
-
-                \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
-
-                $kernel = $app->make(Kernel::class);
                 try {
-                    $laravelResponse = $kernel->handle($request);
-                    try {
-                        $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
-                    } finally {
-                        /* An aborted response still owes the session its write and the
-                         * terminable middleware its run, and a failure of either must not
-                         * take the place of the one that got us here. */
-                        try {
-                            $kernel->terminate($request, $laravelResponse);
-                        } catch (\Throwable $terminateFailure) {
-                            fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
-                        }
-                    }
+                    $this->handleHttp($taRequest, $taResponse, $server, $telescopeEnabled);
+                } catch (\TrueAsync\HttpException $e) {
+                    // The extension's own answer: a 4xx it raised itself, or one a handler asked for.
+                    throw $e;
                 } catch (\Throwable $e) {
                     fwrite(STDERR, "\n!!! FATAL SERVER ERROR !!!\n");
                     fwrite(STDERR, 'Message: '.$e->getMessage()."\n");
@@ -107,7 +75,7 @@ class TrueAsyncServer implements ServerInterface
                     {
                         $taResponse->setStatusCode(500);
                         $taResponse->setHeader('Content-Type', 'text/plain');
-                        $taResponse->setBody($e->getMessage());
+                        $taResponse->setBody(ServerError::body($e, app()));
                         $taResponse->end();
                     }
                 }
@@ -122,6 +90,56 @@ class TrueAsyncServer implements ServerInterface
 
             sleep(2);
             exit(1);
+        }
+    }
+
+    /**
+     * Serve one HTTP request: build the Laravel request, run the kernel, send the response and
+     * terminate. Whatever it throws is the caller's to answer.
+     */
+    private function handleHttp(HttpRequest $taRequest, HttpResponse $taResponse, HttpServer $server, bool $telescopeEnabled): void
+    {
+        $taRequest->awaitBody();
+
+        $request = $this->convertRequest($taRequest);
+
+        RawIo::set($taRequest, $taResponse);
+        RequestContext::current()->set(ScopedService::REQUEST, $request);
+
+        if ($telescopeEnabled) {
+            \Laravel\Telescope\Telescope::startRecordingFor($request);
+        }
+
+        $app    = app();
+
+        /* The HTTP handler is the only place holding both the worker's server object
+         * and the worker's container, so a controller reaching for ServerMetrics
+         * depends on this line. It runs per request rather than once because a
+         * `use (&$bound)` flag cannot be transferred into a worker thread. */
+        $app->make(ServerMetrics::class)->useServer($server);
+
+        \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
+
+        $kernel = $app->make(Kernel::class);
+
+        try {
+            $laravelResponse = $kernel->handle($request);
+
+            try {
+                $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
+            } finally {
+                /* An aborted response still owes the session its write and the
+                 * terminable middleware its run, and a failure of either must not
+                 * take the place of the one that got us here. */
+                try {
+                    $kernel->terminate($request, $laravelResponse);
+                } catch (\Throwable $terminateFailure) {
+                    fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
+                }
+            }
+        } finally {
+            // Also when handle() itself throws: its rendering failed, or a RequestHandled listener threw.
+            TransactionSweep::afterRequest($app);
         }
     }
 
@@ -200,7 +218,20 @@ class TrueAsyncServer implements ServerInterface
         /* The extension parses incoming traceparent / tracestate headers and stamps each
          * request with the timings ServerMetrics::latency() reports. */
         $config->setTelemetryEnabled((bool) ($this->options['telemetry'] ?? false));
-        $config->setWorkers((int) ($this->options['workers']));
+        $config->setWorkers((int) ($this->options['workers'] ?? 1));
+
+        // Each limit is passed only when configured, so an unset one keeps the server's default.
+        if (($this->options['max_connections'] ?? null) !== null) {
+            $config->setMaxConnections((int) $this->options['max_connections']);
+        }
+
+        if (($this->options['max_inflight_requests'] ?? null) !== null) {
+            $config->setMaxInflightRequests((int) $this->options['max_inflight_requests']);
+        }
+
+        if (($this->options['backpressure_target_ms'] ?? null) !== null) {
+            $config->setBackpressureTargetMs((int) $this->options['backpressure_target_ms']);
+        }
         $config->setLogSeverity(\TrueAsync\LogSeverity::INFO)
             ->setLogStream(STDERR);
 
@@ -321,9 +352,8 @@ class TrueAsyncServer implements ServerInterface
         $serverPort = 80;
         // TODO: refactoring
         if ($hostHeader !== '') {
-            $parts      = explode(':', $hostHeader);
-            $serverName = $parts[0];
-            $serverPort = isset($parts[1]) ? (int) $parts[1] : 80;
+            [$serverName, $port] = HostHeader::split($hostHeader);
+            $serverPort = $port ?? 80;
         }
 
         // TODO: refactoring and debug
@@ -337,17 +367,25 @@ class TrueAsyncServer implements ServerInterface
             'REQUEST_METHOD'  => $method,
             'REQUEST_URI'     => $uri,
             'PATH_INFO'       => $path,
-            'QUERY_STRING'    => http_build_query($query),
+            // As sent, not rebuilt from getQuery(): a signed URL hashes these exact bytes.
+            'QUERY_STRING'    => explode('?', $uri, 2)[1] ?? '',
             'SERVER_PROTOCOL' => 'HTTP/'.$request->getHttpVersion(),
             'SERVER_NAME'     => $serverName,
             'SERVER_PORT'     => $serverPort,
             'DOCUMENT_URI'    => $path,
             'SCRIPT_NAME'     => '',
             'SCRIPT_FILENAME' => '',
-            'REMOTE_ADDR'     => '127.0.0.1',
+            // The peer of the socket; a Unix-socket listener has none, and loopback stands in.
+            'REMOTE_ADDR'     => $request->getRemoteAddress() ?? '127.0.0.1',
             'CONTENT_TYPE'    => $request->getContentType() ?? '',
             'CONTENT_LENGTH'  => $request->getContentLength() ?? '',
         ];
+
+        $remotePort = $request->getRemotePort();
+
+        if ($remotePort !== null) {
+            $server['REMOTE_PORT'] = $remotePort;
+        }
 
         if ($request->hasHeader('host')) {
             $server['HTTP_HOST'] = $request->getHeader('host');
@@ -509,72 +547,32 @@ class TrueAsyncServer implements ServerInterface
             $taResponse->setNoCompression();
         }
 
-        $peerGone   = false;
-        $discarding = false;
-
-        /* A handler that returns no value counts as failed: PHP disables it and writes the
-         * pending chunk to the worker's own output. It also runs on a discard, where dropping
-         * the return value is not enough, so both the caller's ob_clean() and this method's
-         * own unwind have to be recognised and answered with silence. */
-        $sink = static function (string $chunk, int $phase) use ($taResponse, &$peerGone, &$discarding): string {
-            if ($chunk === '' || $peerGone || $discarding || ($phase & PHP_OUTPUT_HANDLER_CLEAN) !== 0) {
-                return '';
-            }
-
-            try {
+        $delivered = StreamedBody::forward(
+            $response,
+            static function (string $chunk) use ($taResponse): void {
                 $taResponse->write($chunk);
-            } catch (\Throwable) {
-                $peerGone = true;
             }
+        );
 
-            return '';
-        };
-
-        // Streaming code often opens with `while (ob_get_level()) ob_end_flush()`, this handler included.
-        $outerLevel = ob_get_level();
-
-        if (!ob_start($sink, self::STREAM_CHUNK_BYTES)) {
-            throw new \RuntimeException('Output buffering is unavailable, the response body cannot be forwarded');
-        }
-
-        try {
-            $response->sendContent();
-        } catch (\Throwable $e) {
-            $discarding = true;
-
-            while (ob_get_level() > $outerLevel) {
-                ob_end_clean();
-            }
-
-            throw $e;
-        }
-
-        while (ob_get_level() > $outerLevel) {
-            ob_end_flush();
-        }
-
-        if ($peerGone) {
+        if (! $delivered) {
             return;
         }
 
         $taResponse->end();
     }
 
+    /**
+     * The cookies as PHP would put them in $_COOKIE: the extension decodes them itself from
+     * server 0.18.0 on, and an older build leaves the header to CookieHeader.
+     *
+     * @return array<string, string|array>
+     */
     private function parseCookies(HttpRequest $request): array
     {
-        $header = $request->getHeader('cookie') ?? '';
-        if ($header === '') {
-            return [];
+        if (method_exists($request, 'getCookies')) {
+            return $request->getCookies();
         }
 
-        $cookies = [];
-        foreach (explode('; ', $header) as $pair) {
-            $parts = explode('=', $pair, 2);
-            if (count($parts) === 2) {
-                $cookies[trim($parts[0])] = trim($parts[1]);
-            }
-        }
-
-        return $cookies;
+        return CookieHeader::parse($request->getHeader('cookie') ?? '');
     }
 }

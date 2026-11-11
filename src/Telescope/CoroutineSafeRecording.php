@@ -46,6 +46,29 @@ trait CoroutineSafeRecording
     /**
      * Start recording entries.
      */
+    /**
+     * Start recording for a request the server is about to serve, when Telescope would record
+     * it: Telescope is enabled, and the request is to an approved domain and path — its own
+     * dashboard polling, `telescope-api/*`, is not.
+     *
+     * Upstream decides this once in start(), for the one request of a PHP-FPM process; a worker
+     * serves many, and asks per request.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     */
+    public static function startRecordingFor($request): void
+    {
+        if (! config('telescope.enabled')) {
+            return;
+        }
+
+        if (! static::requestIsToApprovedDomain($request) || ! static::requestIsToApprovedUri($request)) {
+            return;
+        }
+
+        static::startRecording(false);
+    }
+
     public static function startRecording($loadMonitoredTags = true)
     {
         if ($loadMonitoredTags) {
@@ -214,10 +237,11 @@ trait CoroutineSafeRecording
             return;
         }
 
-        static::withoutRecording(function () use ($storage, $entries, $updates, $ctx) {
+        static::withoutRecording(function () use ($storage, $entries, $updates) {
+            // As upstream's store(): a rejected batch drops its entries, and its updates, which
+            // belong to entries earlier requests stored, are written all the same.
             if (! collect(static::$filterBatchUsing)->every->__invoke(collect($entries))) {
-                $ctx->set(self::CTX_ENTRIES, [], replace: true);
-                return;
+                $entries = [];
             }
 
             try {
@@ -272,7 +296,6 @@ trait CoroutineSafeRecording
         static::withoutRecording(function () use ($storage) {
             if (! collect(static::$filterBatchUsing)->every->__invoke(collect(static::$entriesQueue))) {
                 static::$entriesQueue = [];
-                return;
             }
 
             try {

@@ -17,7 +17,7 @@ class TelescopeIsolationTest extends AsyncTestCase
         // The override Telescope class lives in overrides/ and is normally loaded
         // by a prepending autoloader registered in AsyncServiceProvider::register().
         // In unit tests we load it directly so the class is available.
-        require_once __DIR__ . '/../overrides/Telescope.php';
+        require_once \Spawn\Laravel\Telescope\TelescopeOverride::file(__DIR__ . '/../vendor/laravel/telescope/src/Telescope.php');
 
         // Reset Telescope state
         Telescope::$entriesQueue = [];
@@ -144,5 +144,113 @@ class TelescopeIsolationTest extends AsyncTestCase
 
         $this->assertFalse($results['a'], 'A inside withoutRecording must not record');
         $this->assertTrue($results['b'], 'B must still be recording');
+    }
+
+    /**
+     * @return array<string, array{0: bool, 1: string, 2: bool}>
+     */
+    public static function recordingGates(): array
+    {
+        return [
+            'enabled, an ordinary path' => [true, '/orders', true],
+            'disabled' => [false, '/orders', false],
+            "enabled, Telescope's own polling" => [true, '/telescope-api/requests', false],
+        ];
+    }
+
+    #[\PHPUnit\Framework\Attributes\DataProvider('recordingGates')]
+    public function test_a_request_is_recorded_only_when_telescope_would_record_it(bool $enabled, string $path, bool $expected): void
+    {
+        Telescope::enableAsyncRecording();
+        app()->instance('config', new \Illuminate\Config\Repository(['telescope' => ['enabled' => $enabled]]));
+        // startRecording() asks the cache whether recording is paused.
+        app()->instance('cache', new \Illuminate\Cache\Repository(new \Illuminate\Cache\ArrayStore()));
+
+        $results = $this->runParallel(['a' => function () use ($path) {
+            Telescope::startRecordingFor(\Illuminate\Http\Request::create($path));
+
+            return Telescope::isRecording();
+        }]);
+
+        $this->assertSame($expected, $results['a']);
+    }
+
+    /**
+     * Upstream's store() drops the entries a batch filter rejects and still writes the updates
+     * the request queued: they belong to entries stored by earlier requests.
+     */
+    public function test_a_rejected_batch_still_stores_its_updates(): void
+    {
+        Telescope::enableAsyncRecording();
+        Telescope::$filterBatchUsing = [fn () => false];
+
+        $storage = new RecordingEntriesRepository();
+        // store() reads the queue settings before it dispatches pending updates.
+        app()->instance('config', new \Illuminate\Config\Repository(['telescope' => ['queue' => []]]));
+
+        try {
+            $this->runParallel(['a' => function () use ($storage) {
+                Telescope::startRecording(false);
+                Telescope::recordLog(IncomingEntry::make(['message' => 'rejected']));
+                Telescope::recordUpdate(new \Laravel\Telescope\EntryUpdate('uuid-1', 'job', ['status' => 'processed']));
+                Telescope::store($storage);
+            }]);
+        } finally {
+            Telescope::$filterBatchUsing = [];
+        }
+
+        $this->assertSame(0, $storage->stored, 'the rejected entries are dropped');
+        $this->assertSame(1, $storage->updated, 'the update is written all the same');
+    }
+}
+
+final class RecordingEntriesRepository implements \Laravel\Telescope\Contracts\EntriesRepository
+{
+    public int $stored = 0;
+
+    public int $updated = 0;
+
+    public function find($id): \Laravel\Telescope\EntryResult
+    {
+        throw new \LogicException('not used');
+    }
+
+    public function get($type, \Laravel\Telescope\Storage\EntryQueryOptions $options)
+    {
+        return collect();
+    }
+
+    public function store(\Illuminate\Support\Collection $entries)
+    {
+        $this->stored += $entries->count();
+    }
+
+    public function update(\Illuminate\Support\Collection $updates)
+    {
+        $this->updated += $updates->count();
+
+        return collect();
+    }
+
+    public function loadMonitoredTags()
+    {
+    }
+
+    public function isMonitoring(array $tags)
+    {
+        return false;
+    }
+
+    public function monitoring()
+    {
+        return [];
+    }
+
+    public function monitor(array $tags)
+    {
+    }
+
+    public function stopMonitoring(array $tags)
+    {
     }
 }

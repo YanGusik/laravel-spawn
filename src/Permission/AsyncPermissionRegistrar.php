@@ -41,7 +41,8 @@ class AsyncPermissionRegistrar extends PermissionRegistrar
             $id = $id->getKey();
         }
 
-        RequestContext::current()->set(self::CTX_TEAM_ID, $id, replace: true);
+        // Wrapped, so that a request's explicit null is told apart from a request that set none.
+        RequestContext::current()->set(self::CTX_TEAM_ID, ['id' => $id], replace: true);
     }
 
     public function getPermissionsTeamId(): int|string|null
@@ -50,7 +51,11 @@ class AsyncPermissionRegistrar extends PermissionRegistrar
             return parent::getPermissionsTeamId();
         }
 
-        return RequestContext::current()->find(self::CTX_TEAM_ID);
+        $set = RequestContext::current()->find(self::CTX_TEAM_ID);
+
+        // A request that set no team reads the resolver: the team set at boot, or whatever a
+        // custom permission.team_resolver answers.
+        return $set === null ? parent::getPermissionsTeamId() : $set['id'];
     }
 
     public function getWildcardPermissionIndex(Model $record): array

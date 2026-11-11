@@ -22,10 +22,28 @@ class AsyncResponseFactory extends ResponseFactory
 {
     private const CTX_KEY = 'inertia.state';
 
+    /** The version a render in progress resolved before it built its Response. */
+    private const CTX_RENDERING_VERSION = 'inertia.rendering_version';
+
     private bool $async = false;
+
+    /**
+     * What boot configured, captured when async mode starts: each request starts from it.
+     * The properties themselves cannot serve, because render() swaps them.
+     *
+     * @var array{sharedProps: array, rootView: string, version: mixed, encryptHistory: ?bool, urlResolver: ?Closure}
+     */
+    private array $bootState;
 
     public function bootCompleted(): void
     {
+        $this->bootState = [
+            'sharedProps' => $this->sharedProps,
+            'rootView' => $this->rootView,
+            'version' => $this->version,
+            'encryptHistory' => $this->encryptHistory,
+            'urlResolver' => $this->urlResolver,
+        ];
         $this->async = true;
     }
 
@@ -35,13 +53,7 @@ class AsyncResponseFactory extends ResponseFactory
         $state = $ctx->find(self::CTX_KEY);
 
         if ($state === null) {
-            $state = [
-                'sharedProps' => [],
-                'rootView' => $this->rootView,
-                'version' => $this->version,
-                'encryptHistory' => null,
-                'urlResolver' => null,
-            ];
+            $state = $this->bootState;
             $ctx->set(self::CTX_KEY, $state);
         }
 
@@ -138,6 +150,12 @@ class AsyncResponseFactory extends ResponseFactory
             return parent::getVersion();
         }
 
+        $rendering = RequestContext::current()->find(self::CTX_RENDERING_VERSION);
+
+        if ($rendering !== null) {
+            return $rendering;
+        }
+
         $version = $this->getState()['version'];
 
         if ($version instanceof Closure) {
@@ -175,6 +193,14 @@ class AsyncResponseFactory extends ResponseFactory
 
         // Temporarily inject our per-coroutine state into the parent properties
         // so that parent::render() picks them up correctly across Inertia versions.
+        //
+        // The swap holds only while nothing suspends: a sibling render would swap the same
+        // properties under this one. The version is the part that does — the stock middleware
+        // hashes the manifest file, and file I/O suspends — so it is resolved first, and
+        // parent::render() gets it back from getVersion() without running the closure again.
+        $ctx = RequestContext::current();
+        $ctx->set(self::CTX_RENDERING_VERSION, $this->getVersion(), replace: true);
+
         $origShared = $this->sharedProps;
         $origRootView = $this->rootView;
         $origVersion = $this->version;
@@ -191,6 +217,7 @@ class AsyncResponseFactory extends ResponseFactory
         try {
             return parent::render($component, $props);
         } finally {
+            $ctx->unset(self::CTX_RENDERING_VERSION);
             $this->sharedProps = $origShared;
             $this->rootView = $origRootView;
             $this->version = $origVersion;

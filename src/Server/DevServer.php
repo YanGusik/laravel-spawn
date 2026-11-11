@@ -10,6 +10,7 @@ use Illuminate\Contracts\Http\Kernel;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 use function Async\spawn;
@@ -93,6 +94,9 @@ class DevServer implements ServerInterface
 
     private function handleConnection(mixed $client, Scope $requestScope): void
     {
+        // This coroutine runs in the request's own scope; the extension assigns no request scope here.
+        RequestContext::begin();
+
         try {
             $raw = $this->readRaw($client);
 
@@ -111,13 +115,24 @@ class DevServer implements ServerInterface
 
             \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
+            // Only the package's copy of Telescope records per request; Telescope's own class has
+            // no such method.
+            if (method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor')) {
+                \Laravel\Telescope\Telescope::startRecordingFor($request);
+            }
+
             $kernel = $this->app->make(Kernel::class);
             $response = $kernel->handle($request);
 
-            ResponseEmitter::emit($client, $response);
-
-            $kernel->terminate($request, $response);
+            try {
+                ResponseEmitter::emit($client, $response);
+            } finally {
+                // A stream that fails part way still owes the session its write and the
+                // terminable middleware its run.
+                $kernel->terminate($request, $response);
+            }
         } finally {
+            TransactionSweep::afterRequest($this->app);
             $requestScope->dispose();
             fclose($client);
         }

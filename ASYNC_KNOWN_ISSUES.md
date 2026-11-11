@@ -188,10 +188,11 @@ visibly; where none is named, nothing will notice the change but a reader.
    and `firebird` do not, which covers `sqlsrv` on most builds — and for a private
    in-memory SQLite database. Start-up puts the options on every configured connection
    without asking, so such a connection reports the refusal instead of quietly serving
-   one shared handle to every coroutine. Persistent connections are not supported under
+   one shared handle to every coroutine; a `:memory:` SQLite connection is named on stderr
+   at start-up, with `file:<name>?mode=memory&cache=shared` as the form the pool takes. Persistent connections are not supported under
    async serving in the first place: one connection shared across coroutines is the
    defect the pool exists to prevent.
-12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/` holds
+12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/<release>/` holds
    `Relations\Relation`, `Concerns\HasRelationships`, `Concerns\GuardsAttributes` and
    `Concerns\HasEvents`, and `EloquentOverrides` puts them in front of Laravel's through
    Composer's class map. They form three groups, installed independently of each other: the
@@ -203,11 +204,15 @@ visibly; where none is named, nothing will notice the change but a reader.
    one leaves the application on Laravel's class for that group — with the defect — rather than
    on a copy that has quietly fallen behind; `src/bootstrap.php` raises an `E_USER_WARNING`
    naming the group and the reason, the worker writes the same to stderr at start-up, and
-   `test_the_copies_still_match_the_laravel_files_behind_them` fails, which is where the copies
-   are meant to be brought forward — `php bin/refresh-eloquent-overrides.php` re-copies every
-   file, re-applies the edits and prints the new checksums. Only Laravel 13.26.1 is copied, and
-   `composer.json` requires `^13.26.1`: a newer 13 installs, and one that moves a copied file
-   is reported at start-up rather than refused by composer. The churn is real rather than
+   `test_the_copies_still_match_the_laravel_files_behind_them` fails, which is where a copy of
+   the new variant is meant to be taken — `php bin/refresh-eloquent-overrides.php` copies every
+   file no copy was taken from, re-applies the edits and prints the checksums to add. A file
+   keeps one copy per upstream variant, and the copy installed is the one taken from the file
+   the application has: a copy is never put over a variant it was not taken from, because the
+   variant can carry a method the copy would take away (`Relation::clone()`, 13.38.0). The
+   variants copied cover every Laravel 13 from 13.26.1 to 13.42.0, and `composer.json` requires
+   `^13.30.0`, the oldest 13 without a published security advisory: a newer 13 installs, and one that moves a copied file is reported at start-up
+   rather than refused by composer. The churn is real rather than
    theoretical: `Relation` gained `withConstraints()` and a second flag between 13.2.0 and
    13.26.1, and the CI of this branch went red on exactly that. CI runs the suite against the
    newest Laravel 13 on every push, and the `Laravel drift` workflow does the same every night,
@@ -290,6 +295,12 @@ visibly; where none is named, nothing will notice the change but a reader.
    on it fails with an `Error` naming that class. Per-connection configuration belongs in the
    factory: everything `mail.mailers.*` declares is applied to every connection the pool opens,
    and anything beyond that is what `Mail::extend('smtp', …)` is for.
+17. **`FrankenPhpServer` passes no uploaded files.** The FrankenPHP runtime hands a worker the
+   method, URI, headers and raw body of a request (`stubs/frankenphp.php`) and no parsed files,
+   so `$request->file()` is empty and a `multipart/form-data` upload is lost under it. It would
+   take either an API of the runtime or a multipart parser in this package; until then uploads
+   want `TrueAsyncServer`, which passes the extension's own upload objects through
+   `UploadedFiles`.
 
 
 ---
@@ -309,7 +320,10 @@ each will surprise somebody:
   container's own rule and mutates only the instance.
 
 `makeWith()` with parameters and `instance()` are handled: parameters bypass the context,
-and an explicit `instance()` outranks scoping.
+and an explicit `instance()` outranks scoping. Called inside a request for a scoped alias,
+`instance()` replaces it for that request alone and runs no rebinding callbacks; called outside
+any request, it replaces it for everybody. A shared alias replaced inside a request stays shared,
+and `async.diagnostics` reports it.
 
 ---
 

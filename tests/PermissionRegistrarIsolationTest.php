@@ -80,7 +80,6 @@ class PermissionRegistrarIsolationTest extends AsyncTestCase
 
         // Pre-load a fake permissions collection into the registrar
         $reflection = new \ReflectionProperty($registrar, 'permissions');
-        $reflection->setAccessible(true);
         $fakePermissions = new Collection(['fake-permission']);
         $reflection->setValue($registrar, $fakePermissions);
 
@@ -151,7 +150,6 @@ class PermissionRegistrarIsolationTest extends AsyncTestCase
 
         // Pre-load a fake permissions collection
         $reflection = new \ReflectionProperty($registrar, 'permissions');
-        $reflection->setAccessible(true);
         $fakePermissions = new Collection(['fake-permission']);
         $reflection->setValue($registrar, $fakePermissions);
 
@@ -182,5 +180,24 @@ class PermissionRegistrarIsolationTest extends AsyncTestCase
 
         $registrar->setPermissionsTeamId(null);
         $this->assertNull($registrar->getPermissionsTeamId());
+    }
+
+    public function test_async_registrar_falls_back_to_the_team_set_at_boot(): void
+    {
+        $registrar = $this->makeRegistrar(\Spawn\Laravel\Permission\AsyncPermissionRegistrar::class);
+        $registrar->setPermissionsTeamId(7);
+        $registrar->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => fn () => $registrar->getPermissionsTeamId(),
+            'b' => function () use ($registrar) {
+                $registrar->setPermissionsTeamId(null);
+
+                return $registrar->getPermissionsTeamId();
+            },
+        ]);
+
+        $this->assertSame(7, $results['a'], 'a request that sets none reads the resolver');
+        $this->assertNull($results['b'], 'an explicit null clears the team for that request');
     }
 }

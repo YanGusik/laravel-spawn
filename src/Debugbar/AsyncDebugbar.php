@@ -49,7 +49,7 @@ class AsyncDebugbar extends LaravelDebugbar
 
         $result = parent::handleResponse($request, $response);
 
-        RequestContext::current()->set(self::CTX_RESPONSE_MODIFIED, $this->responseIsModified);
+        RequestContext::current()->set(self::CTX_RESPONSE_MODIFIED, $this->responseIsModified, replace: true);
 
         return $result;
     }
@@ -79,7 +79,7 @@ class AsyncDebugbar extends LaravelDebugbar
     public function collect(): array
     {
         $data = parent::collect();
-        RequestContext::current()->set(self::CTX_DATA, $data);
+        RequestContext::current()->set(self::CTX_DATA, $data, replace: true);
 
         return $data;
     }

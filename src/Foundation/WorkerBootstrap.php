@@ -144,7 +144,15 @@ final class WorkerBootstrap
             return;
         }
 
-        foreach (array_keys($config->get('database.connections', [])) as $name) {
+        foreach ($config->get('database.connections', []) as $name => $connection) {
+            // The options still go on: without the pool this connection would be one handle
+            // for every coroutine. Named here, so its first query's refusal is not a surprise.
+            if (($connection['driver'] ?? null) === 'sqlite' && ($connection['database'] ?? null) === ':memory:') {
+                error_log("[async] connection '{$name}' is a private in-memory SQLite database, which the "
+                    .'PDO pool cannot take: its first query will throw. A database shared between '
+                    ."coroutines is 'file:<name>?mode=memory&cache=shared'");
+            }
+
             $config->set(
                 "database.connections.{$name}.options",
                 array_replace(

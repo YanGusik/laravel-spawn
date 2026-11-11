@@ -115,4 +115,22 @@ class ViewIsolationTest extends AsyncTestCase
         $this->assertEquals('dark', $results['b']['theme']);
         $this->assertArrayNotHasKey('user', $results['b']);
     }
+
+    public function test_shared_reads_the_requests_value_the_boot_value_and_the_default(): void
+    {
+        $factory = $this->makeFactory(AsyncViewFactory::class);
+        $factory->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($factory) {
+                $factory->share('title', 'A');
+
+                return [$factory->shared('title'), $factory->shared('app') !== null, $factory->shared('none', 'd')];
+            },
+            'b' => fn () => $factory->shared('title'),
+        ]);
+
+        $this->assertSame(['A', true, 'd'], $results['a']);
+        $this->assertNull($results['b'], 'another request does not see A\'s value');
+    }
 }

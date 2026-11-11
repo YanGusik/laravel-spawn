@@ -178,6 +178,14 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, &$exi
         $discard['body'] === 'KEPT'
     );
 
+    // What an exception says is for the log, not the client: a SQL error or a path in a 500
+    // body is a disclosure. app.debug is off in the bench application.
+    $early = $request('GET', '/framing/stream-fails-early');
+    $check(
+        'framing: a 500 the server answers itself does not carry the exception message (' . $early['body'] . ')',
+        $early['status'] === 500 && !str_contains($early['body'], 'hunter2') && trim($early['body']) === 'Internal Server Error'
+    );
+
     // The worker is still serving after all of that, which a failed stream can cost.
     $after = $request('GET', '/ping');
     $check('framing: the worker still answers afterwards', $after['status'] === 200 && trim($after['body']) === 'pong');

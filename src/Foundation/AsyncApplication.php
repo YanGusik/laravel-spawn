@@ -77,10 +77,22 @@ class AsyncApplication extends Application
     private bool $scopedConfigIsFinal = false;
 
     /**
-     * Aliases the application deliberately replaced with instance() while serving,
-     * as a set. Such an object is the answer for everyone, scoping or not.
+     * Aliases the worker deliberately replaced with instance() while serving, outside any
+     * request, as a set. Such an object is the answer for everyone, scoping or not.
      */
     private array $replacedInstances = [];
+
+    /**
+     * async.diagnostics as read when async mode started: whether a shared service replaced
+     * from inside a request is reported.
+     */
+    private bool $diagnostics = false;
+
+    /**
+     * Shared aliases already reported as replaced from inside a request, as a set: one line
+     * per alias for the life of the worker, not one per request.
+     */
+    private array $reportedSharedReplacements = [];
 
     public function __construct($basePath = null)
     {
@@ -146,7 +158,9 @@ class AsyncApplication extends Application
 
         $this->shareFacadeRoots();
 
-        if ($config !== null && $config->get('async.diagnostics', false)) {
+        $this->diagnostics = $config !== null && (bool) $config->get('async.diagnostics', false);
+
+        if ($this->diagnostics) {
             $this->reportScopedServiceRisks();
             $this->reportPerRequestCaptures();
         }
@@ -245,30 +259,112 @@ class AsyncApplication extends Application
      * renders an error before the first request is served.
      */
     /**
-     * Note that an application replaced a service outright.
+     * Replace a service with this object for as long as the alias lives.
      *
-     * A per-request service is answered from the context, which would otherwise ignore
-     * the replacement entirely. 'request' is exempt: the kernel rebinds it on every
-     * request, and that is the scoping working, not somebody overriding it.
+     * Inside a request, a per-request alias is replaced for that request alone: the object
+     * goes into the request's context and nothing shared is touched, so the next request
+     * resolves its own again. A tenancy switch or `actingAs` in one request must not hand its
+     * object to every request the worker serves afterwards. Rebinding callbacks do not run for
+     * such a replacement: they were registered on shared objects, which would then hold this
+     * request's object.
+     *
+     * Outside any request (the worker itself, a test swapping a service for a mock) the
+     * object answers everybody, per-request alias or not: the per-request lookup would
+     * otherwise ignore the replacement entirely. A shared alias replaced from inside a request
+     * is shared too, which is what a shared service is; async.diagnostics reports it once.
+     *
+     * 'request' is exempt from both: the kernel rebinds it on every request, and that is the
+     * scoping working, not somebody overriding it.
      */
     public function instance($abstract, $instance)
     {
         $alias = $this->getAlias($abstract);
 
-        if ($this->asyncMode && $alias !== 'request') {
-            $this->replacedInstances[$alias] = true;
+        if (! $this->asyncMode || $alias === 'request') {
+            return parent::instance($abstract, $instance);
         }
+
+        $key = $this->perRequestKey($alias);
+        $context = RequestContext::current();
+
+        if ($context === root_context()) {
+            $this->replacedInstances[$alias] = true;
+
+            return parent::instance($abstract, $instance);
+        }
+
+        if ($key !== null) {
+            $context->set($key, $instance, replace: true);
+
+            return $instance;
+        }
+
+        $this->reportSharedReplacement($alias);
+        $this->replacedInstances[$alias] = true;
 
         return parent::instance($abstract, $instance);
     }
 
     public function bound($abstract): bool
     {
-        if ($this->getAlias($abstract) === 'request') {
+        $alias = $this->getAlias($abstract);
+
+        if ($alias === 'request') {
             return true;
         }
 
-        return parent::bound($abstract);
+        return parent::bound($abstract) || $this->requestHolds($alias);
+    }
+
+    /**
+     * Drop the object instance() put in, from the request when called inside one.
+     */
+    public function forgetInstance($abstract)
+    {
+        $alias = $this->getAlias($abstract);
+
+        if ($this->asyncMode && $alias !== 'request' && RequestContext::current() !== root_context()) {
+            $key = $this->perRequestKey($alias);
+
+            if ($key !== null) {
+                RequestContext::current()->unset($key);
+
+                return;
+            }
+        }
+
+        unset($this->replacedInstances[$alias]);
+
+        parent::forgetInstance($abstract);
+    }
+
+    /**
+     * Whether the current request holds its own object for a per-request alias.
+     */
+    private function requestHolds(string $alias): bool
+    {
+        if (! $this->asyncMode) {
+            return false;
+        }
+
+        $key = $this->perRequestKey($alias);
+
+        return $key !== null && RequestContext::current()->find($key) !== null;
+    }
+
+    private function reportSharedReplacement(string $alias): void
+    {
+        if (! $this->diagnostics || isset($this->reportedSharedReplacements[$alias])) {
+            return;
+        }
+
+        $this->reportedSharedReplacements[$alias] = true;
+
+        error_log(
+            "[async] instance('{$alias}') was called inside a request, and '{$alias}' is shared: "
+            .'every request the worker serves gets this object. List it in async.scoped_services '
+            .'to keep a replacement inside the request that made it'
+        );
     }
 
     public function offsetGet($key): mixed
@@ -342,19 +438,22 @@ class AsyncApplication extends Application
             return null;
         }
 
-        // instance() names the exact object to use, which outranks scoping — otherwise
-        // a test swapping a service for a mock would be answered with the real one.
-        if (isset($this->replacedInstances[$alias]) && isset($this->instances[$alias])) {
-            return $this->instances[$alias];
-        }
-
         $ctx = RequestContext::current();
         $ctxKey = $key;
 
+        // The request's own object comes first: whatever is there was built for this
+        // request or put in by its own instance() call.
         $instance = $ctx->find($ctxKey);
 
         if ($instance !== null) {
             return $instance;
+        }
+
+        // instance() from outside any request names the exact object to use, which outranks
+        // scoping — otherwise a test swapping a service for a mock would be answered with the
+        // real one.
+        if (isset($this->replacedInstances[$alias]) && isset($this->instances[$alias])) {
+            return $this->instances[$alias];
         }
 
         $instance = $this->whileBuildingScoped(function () use ($alias) {
@@ -837,10 +936,12 @@ class AsyncApplication extends Application
         $this->scopedInstancesSeen = count($this->scopedInstances);
 
         foreach ($this->scopedInstances as $scoped) {
-            // scoped() also accepts a closure, whose return types name the services;
-            // those are left out rather than guessed at, and stay shared.
-            if (is_string($scoped)) {
-                $this->markPerRequest($scoped);
+            // scoped() also accepts a closure, whose return types name the services, the
+            // same reading Container::forgetScopedInstances() gives it.
+            $abstracts = $scoped instanceof Closure ? $this->closureReturnTypes($scoped) : [$scoped];
+
+            foreach ($abstracts as $abstract) {
+                $this->markPerRequest($abstract);
             }
         }
     }

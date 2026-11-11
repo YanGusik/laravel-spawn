@@ -1,14 +1,14 @@
 name: Laravel drift
 
-# The four Eloquent files under overrides/ are copies, frozen against the release they were
-# taken from. A newer Laravel that touches one of them leaves an application on Laravel's own
+# The four Eloquent files under overrides/ are copies, each frozen against the variant of the
+# Laravel file it was taken from. A newer Laravel that touches one of them leaves an application on Laravel's own
 # class for that group of copies — the defect comes back, quietly, with a line on stderr. This
 # job installs the newest Laravel 13 every night and fails when that has happened, so the
 # copies are brought forward by whoever maintains the package rather than discovered by whoever
 # runs it.
 #
-# Bring them forward with `php bin/refresh-eloquent-overrides.php`, which re-copies every file,
-# re-applies the edits and prints the checksums to put into EloquentOverrides.
+# Take a copy of the new variant with `php bin/refresh-eloquent-overrides.php`, which copies every
+# file no copy was taken from, re-applies the edits and prints the checksums to add to EloquentOverrides.
 
 on:
   schedule:

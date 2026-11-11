@@ -12,6 +12,7 @@ use Symfony\Component\HttpFoundation\Response as SymfonyResponse;
 use Spawn\Laravel\Contracts\ServerInterface;
 use Spawn\Laravel\Foundation\RequestContext;
 use Spawn\Laravel\Foundation\ScopedService;
+use Spawn\Laravel\Database\TransactionSweep;
 use Spawn\Laravel\Server\Concerns\ManagesDatabasePool;
 
 class FrankenPhpServer implements ServerInterface
@@ -46,9 +47,16 @@ class FrankenPhpServer implements ServerInterface
         // The pool initializes lazily on the first DB access inside a request coroutine.
 
         $telescopeEnabled = class_exists(\Laravel\Telescope\Telescope::class)
-            && method_exists(\Laravel\Telescope\Telescope::class, 'isRecording');
+            && method_exists(\Laravel\Telescope\Telescope::class, 'startRecordingFor');
 
         FrankenHttpServer::onRequest(function (FrankenRequest $frankenRequest, FrankenResponse $frankenResponse) use ($telescopeEnabled) {
+            // Whether the runtime gives each request a scope of its own is not known here; begin()
+            // marks whatever scope this coroutine runs in, and a request scope, if there is one,
+            // still answers first.
+            RequestContext::begin();
+
+            $sending = false;
+
             try {
                 $request = $this->buildRequest($frankenRequest);
 
@@ -57,22 +65,42 @@ class FrankenPhpServer implements ServerInterface
                 \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
                 if ($telescopeEnabled) {
-                    \Laravel\Telescope\Telescope::startRecording(false);
+                    \Laravel\Telescope\Telescope::startRecordingFor($request);
                 }
 
                 $kernel = $this->app->make(Kernel::class);
                 $laravelResponse = $kernel->handle($request);
 
-                $this->sendResponse($frankenResponse, $laravelResponse);
+                $sending = true;
 
-                $kernel->terminate($request, $laravelResponse);
+                try {
+                    $this->sendResponse($frankenResponse, $laravelResponse);
+                } finally {
+                    // A stream that fails part way still owes the session its write and the
+                    // terminable middleware its run.
+                    $kernel->terminate($request, $laravelResponse);
+                }
             } catch (\Throwable $e) {
                 error_log('[async:franken] ' . $e::class . ': ' . $e->getMessage() . "\n" . $e->getTraceAsString());
 
+                // Once the response is on its way, a status and a body of our own would only be
+                // appended to it: the client gets the stream as far as it went.
+                if ($sending) {
+                    try {
+                        $frankenResponse->end();
+                    } catch (\Throwable) {
+                        // The runtime already closed it; the failure above is the one logged.
+                    }
+
+                    return;
+                }
+
                 $frankenResponse->setStatus(500);
                 $frankenResponse->setHeader('Content-Type', 'text/plain');
-                $frankenResponse->write($e->getMessage());
+                $frankenResponse->write(ServerError::body($e, $this->app));
                 $frankenResponse->end();
+            } finally {
+                TransactionSweep::afterRequest($this->app);
             }
         });
     }
@@ -106,11 +134,10 @@ class FrankenPhpServer implements ServerInterface
         // Parse SERVER_NAME and SERVER_PORT from the Host header.
         // FrankenPHP/Caddy strips the port from the Host header before passing to PHP,
         // so fall back to APP_URL when no port is present in the Host header.
-        $hostHeader = $headers['HOST'] ?? 'localhost';
-        if (str_contains($hostHeader, ':')) {
-            [$serverName, $serverPort] = explode(':', $hostHeader, 2);
+        [$serverName, $hostPort] = HostHeader::split($headers['HOST'] ?? 'localhost');
+        if ($hostPort !== null) {
+            $serverPort = (string) $hostPort;
         } else {
-            $serverName = $hostHeader;
             $appUrl     = $this->app->make('config')->get('app.url', '');
             $appPort    = parse_url($appUrl, PHP_URL_PORT);
             $serverPort = $appPort ? (string) $appPort : '80';
@@ -122,7 +149,8 @@ class FrankenPhpServer implements ServerInterface
         $rawRemote  = $frankenRequest->getRemoteAddr();
         if ($rawRemote !== '') {
             if (($lastColon = strrpos($rawRemote, ':')) !== false) {
-                $remoteAddr = substr($rawRemote, 0, $lastColon);
+                // REMOTE_ADDR is a bare address: an IPv6 peer comes as "[::1]:port".
+                $remoteAddr = trim(substr($rawRemote, 0, $lastColon), '[]');
                 $remotePort = substr($rawRemote, $lastColon + 1);
             } else {
                 $remoteAddr = $rawRemote;
@@ -158,17 +186,7 @@ class FrankenPhpServer implements ServerInterface
             $server['HTTP_HOST'] = $serverName . ':' . $serverPort;
         }
 
-        // Parse cookies from the Cookie header
-        $cookies = [];
-        $cookieHeader = $headers['COOKIE'] ?? '';
-        if ($cookieHeader !== '') {
-            foreach (explode('; ', $cookieHeader) as $pair) {
-                $parts = explode('=', $pair, 2);
-                if (count($parts) === 2) {
-                    $cookies[trim($parts[0])] = trim($parts[1]);
-                }
-            }
-        }
+        $cookies = CookieHeader::parse($headers['COOKIE'] ?? '');
 
         // Parse POST body for form submissions
         $postData    = [];
@@ -210,7 +228,17 @@ class FrankenPhpServer implements ServerInterface
             $frankenResponse->addHeader('Set-Cookie', (string) $cookie);
         }
 
-        $frankenResponse->write((string) $response->getContent());
+        $content = $response->getContent();
+
+        if ($content !== false) {
+            $frankenResponse->write($content);
+        } else {
+            // A StreamedResponse or a BinaryFileResponse writes its own body.
+            StreamedBody::forward($response, static function (string $chunk) use ($frankenResponse): void {
+                $frankenResponse->write($chunk);
+            });
+        }
+
         $frankenResponse->end();
     }
 }

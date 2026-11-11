@@ -224,6 +224,24 @@ return [
 
         /*
         |--------------------------------------------------------------------------
+        | Admission Limits
+        |--------------------------------------------------------------------------
+        |
+        | Left null, each takes the server's own default: no connection cap, an
+        | in-flight cap of ten times max_connections (none without one), and
+        | CoDel back-pressure on accept with a 5 ms target. A request over the
+        | in-flight cap is answered 503 with Retry-After. For slow handlers
+        | (database, I/O) the server suggests a back-pressure target of 50 to
+        | 100 ms; 0 switches it off.
+        |
+        */
+
+        'max_connections'        => env('ASYNC_MAX_CONNECTIONS'),
+        'max_inflight_requests'  => env('ASYNC_MAX_INFLIGHT_REQUESTS'),
+        'backpressure_target_ms' => env('ASYNC_BACKPRESSURE_TARGET_MS'),
+
+        /*
+        |--------------------------------------------------------------------------
         | Statistics
         |--------------------------------------------------------------------------
         |

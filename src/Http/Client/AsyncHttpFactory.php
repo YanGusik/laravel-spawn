@@ -98,7 +98,8 @@ class AsyncHttpFactory extends Factory
             return $this->memoState;
         }
 
-        $state = $context->findLocal(self::CTX_KEY);
+        // Outside a request a nested scope inherits the fakes the scopes above it installed.
+        $state = RequestContext::inRequest() ? $context->findLocal(self::CTX_KEY) : $context->find(self::CTX_KEY);
 
         if (! $state instanceof HttpClientState) {
             $state = new HttpClientState();
