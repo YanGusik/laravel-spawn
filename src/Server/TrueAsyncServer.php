@@ -347,13 +347,17 @@ class TrueAsyncServer implements ServerInterface
         $method = $request->getMethod();
         $query  = $request->getQuery();
 
+        // The transport, not X-Forwarded-Proto: behind a proxy, TrustProxies decides.
+        // isSecure() came with true-async/server#444; an older server has no TLS flag.
+        $secure = method_exists($request, 'isSecure') && $request->isSecure();
+
         $hostHeader = $request->getHeader('host') ?? '';
         $serverName = 'localhost';
-        $serverPort = 80;
+        $serverPort = $secure ? 443 : 80;
         // TODO: refactoring
         if ($hostHeader !== '') {
             [$serverName, $port] = HostHeader::split($hostHeader);
-            $serverPort = $port ?? 80;
+            $serverPort = $port ?? $serverPort;
         }
 
         // TODO: refactoring and debug
@@ -380,6 +384,10 @@ class TrueAsyncServer implements ServerInterface
             'CONTENT_TYPE'    => $request->getContentType() ?? '',
             'CONTENT_LENGTH'  => $request->getContentLength() ?? '',
         ];
+
+        if ($secure) {
+            $server['HTTPS'] = 'on';
+        }
 
         $remotePort = $request->getRemotePort();
 

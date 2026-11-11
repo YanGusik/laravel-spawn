@@ -219,6 +219,9 @@ $router->get('/echo-request', fn (Illuminate\Http\Request $request) => response(
     'server_name' => $request->server('SERVER_NAME'),
     'server_port' => $request->server('SERVER_PORT'),
     'cookies' => $request->cookies->all(),
+    'https' => $request->server('HTTPS'),
+    'secure' => $request->isSecure(),
+    'url' => url('/x'),
 ]));
 
 // A stream that fails before its first byte: the exception escapes the kernel, which has
