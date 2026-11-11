@@ -57,42 +57,11 @@ class TrueAsyncServer implements ServerInterface
                 $telescopeEnabled,
                 $server
             ): void {
-                $taRequest->awaitBody();
-
-                $request = $this->convertRequest($taRequest);
-
-                RawIo::set($taRequest, $taResponse);
-                RequestContext::current()->set(ScopedService::REQUEST, $request);
-
-                if ($telescopeEnabled) {
-                    \Laravel\Telescope\Telescope::startRecording(false);
-                }
-
-                $app    = app();
-
-                /* This closure is the only place holding both the worker's server object
-                 * and the worker's container, so a controller reaching for ServerMetrics
-                 * depends on this line. It runs per request rather than once because a
-                 * `use (&$bound)` flag cannot be transferred into a worker thread. */
-                $app->make(ServerMetrics::class)->useServer($server);
-
-                \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
-
-                $kernel = $app->make(Kernel::class);
                 try {
-                    $laravelResponse = $kernel->handle($request);
-                    try {
-                        $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
-                    } finally {
-                        /* An aborted response still owes the session its write and the
-                         * terminable middleware its run, and a failure of either must not
-                         * take the place of the one that got us here. */
-                        try {
-                            $kernel->terminate($request, $laravelResponse);
-                        } catch (\Throwable $terminateFailure) {
-                            fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
-                        }
-                    }
+                    $this->handleHttp($taRequest, $taResponse, $server, $telescopeEnabled);
+                } catch (\TrueAsync\HttpException $e) {
+                    // The extension's own answer: a 4xx it raised itself, or one a handler asked for.
+                    throw $e;
                 } catch (\Throwable $e) {
                     fwrite(STDERR, "\n!!! FATAL SERVER ERROR !!!\n");
                     fwrite(STDERR, 'Message: '.$e->getMessage()."\n");
@@ -105,7 +74,7 @@ class TrueAsyncServer implements ServerInterface
                     {
                         $taResponse->setStatusCode(500);
                         $taResponse->setHeader('Content-Type', 'text/plain');
-                        $taResponse->setBody($e->getMessage());
+                        $taResponse->setBody(ServerError::body($e, app()));
                         $taResponse->end();
                     }
                 }
@@ -120,6 +89,50 @@ class TrueAsyncServer implements ServerInterface
 
             sleep(2);
             exit(1);
+        }
+    }
+
+    /**
+     * Serve one HTTP request: build the Laravel request, run the kernel, send the response and
+     * terminate. Whatever it throws is the caller's to answer.
+     */
+    private function handleHttp(HttpRequest $taRequest, HttpResponse $taResponse, HttpServer $server, bool $telescopeEnabled): void
+    {
+        $taRequest->awaitBody();
+
+        $request = $this->convertRequest($taRequest);
+
+        RawIo::set($taRequest, $taResponse);
+        RequestContext::current()->set(ScopedService::REQUEST, $request);
+
+        if ($telescopeEnabled) {
+            \Laravel\Telescope\Telescope::startRecording(false);
+        }
+
+        $app    = app();
+
+        /* The HTTP handler is the only place holding both the worker's server object
+         * and the worker's container, so a controller reaching for ServerMetrics
+         * depends on this line. It runs per request rather than once because a
+         * `use (&$bound)` flag cannot be transferred into a worker thread. */
+        $app->make(ServerMetrics::class)->useServer($server);
+
+        \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
+
+        $kernel = $app->make(Kernel::class);
+        $laravelResponse = $kernel->handle($request);
+
+        try {
+            $this->sendResponse($taResponse, $laravelResponse, $taRequest->getMethod() === 'HEAD');
+        } finally {
+            /* An aborted response still owes the session its write and the
+             * terminable middleware its run, and a failure of either must not
+             * take the place of the one that got us here. */
+            try {
+                $kernel->terminate($request, $laravelResponse);
+            } catch (\Throwable $terminateFailure) {
+                fwrite(STDERR, '[async] terminate: '.$terminateFailure->getMessage()."\n");
+            }
         }
     }
 

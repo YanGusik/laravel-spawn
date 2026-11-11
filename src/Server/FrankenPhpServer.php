@@ -71,7 +71,7 @@ class FrankenPhpServer implements ServerInterface
 
                 $frankenResponse->setStatus(500);
                 $frankenResponse->setHeader('Content-Type', 'text/plain');
-                $frankenResponse->write($e->getMessage());
+                $frankenResponse->write(ServerError::body($e, $this->app));
                 $frankenResponse->end();
             }
         });

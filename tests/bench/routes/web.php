@@ -220,3 +220,9 @@ $router->get('/echo-request', fn (Illuminate\Http\Request $request) => response(
     'server_port' => $request->server('SERVER_PORT'),
     'cookies' => $request->cookies->all(),
 ]));
+
+// A stream that fails before its first byte: the exception escapes the kernel, which has
+// already returned, and the server answers 500 itself (ResponseFramingE2ETest).
+$router->get('/framing/stream-fails-early', fn () => response()->stream(function () {
+    throw new \RuntimeException('secret: SQLSTATE password=hunter2');
+}));
