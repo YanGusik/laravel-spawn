@@ -214,10 +214,11 @@ trait CoroutineSafeRecording
             return;
         }
 
-        static::withoutRecording(function () use ($storage, $entries, $updates, $ctx) {
+        static::withoutRecording(function () use ($storage, $entries, $updates) {
+            // As upstream's store(): a rejected batch drops its entries, and its updates, which
+            // belong to entries earlier requests stored, are written all the same.
             if (! collect(static::$filterBatchUsing)->every->__invoke(collect($entries))) {
-                $ctx->set(self::CTX_ENTRIES, [], replace: true);
-                return;
+                $entries = [];
             }
 
             try {
@@ -272,7 +273,6 @@ trait CoroutineSafeRecording
         static::withoutRecording(function () use ($storage) {
             if (! collect(static::$filterBatchUsing)->every->__invoke(collect(static::$entriesQueue))) {
                 static::$entriesQueue = [];
-                return;
             }
 
             try {
