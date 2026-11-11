@@ -3,6 +3,7 @@
 namespace Spawn\Laravel\View;
 
 use Illuminate\Contracts\Events\Dispatcher;
+use Illuminate\Support\Arr;
 use Illuminate\View\Engines\EngineResolver;
 use Illuminate\View\Factory;
 use Illuminate\View\ViewFinderInterface;
@@ -275,6 +276,20 @@ class AsyncViewFactory extends Factory
         }
 
         return $value;
+    }
+
+    /**
+     * One shared value as this request sees it: its own overlay first, then the boot-time set.
+     *
+     * @param  string  $key  a dot path, as Factory::shared() takes it
+     */
+    public function shared($key, $default = null)
+    {
+        if (! $this->async) {
+            return parent::shared($key, $default);
+        }
+
+        return Arr::get($this->getShared(), $key, $default);
     }
 
     /**
