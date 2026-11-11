@@ -34,7 +34,7 @@ final class RawIo
 
     public static function request(): HttpRequest
     {
-        $request = request_context()->find(self::CTX_REQUEST);
+        $request = request_context()?->find(self::CTX_REQUEST);
 
         if (! $request instanceof HttpRequest) {
             throw new \RuntimeException(
@@ -48,7 +48,7 @@ final class RawIo
 
     public static function response(): HttpResponse
     {
-        $response = request_context()->find(self::CTX_RESPONSE);
+        $response = request_context()?->find(self::CTX_RESPONSE);
 
         if (! $response instanceof HttpResponse) {
             throw new \RuntimeException(
