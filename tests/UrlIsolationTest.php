@@ -78,6 +78,19 @@ class UrlIsolationTest extends AsyncTestCase
         return count((fn () => $this->reboundCallbacks)->call($app)[$abstract] ?? []);
     }
 
+    /** Published at boot: a request that published it would keep it to itself. */
+    public function test_the_route_collection_is_published_for_every_request(): void
+    {
+        $app = $this->bootedApp();
+
+        $results = $this->runParallel([
+            'a' => fn () => $app->make('url') !== null,
+            'b' => fn () => $app->bound('routes') && $app['routes'] === $app['router']->getRoutes(),
+        ]);
+
+        $this->assertTrue($results['b']);
+    }
+
     public function test_each_request_reads_its_own_url(): void
     {
         $app = $this->bootedApp();

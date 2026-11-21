@@ -94,6 +94,20 @@ class AsyncApplication extends Application
      */
     private array $reportedSharedReplacements = [];
 
+    /**
+     * Aliases instance() replaced inside a request while neither per-request nor shared, as a set. Such
+     * a replacement lasts the rest of that request, as under php-fpm, and is kept in the request's context
+     * under the alias itself; only these aliases pay for a context lookup on resolve. Append-only.
+     */
+    private array $requestLocalAliases = [];
+
+    /**
+     * Outside async mode, the objects of scopedSingleton() aliases that have no binding of their own:
+     * alias => object, one per alias until forgetScopedInstances(), as Laravel's scoped() keeps them.
+     * Never in $this->instances, so no prototype is captured from it.
+     */
+    private array $syncScopedInstances = [];
+
     public function __construct($basePath = null)
     {
         parent::__construct($basePath);
@@ -135,6 +149,7 @@ class AsyncApplication extends Application
     public function enableAsyncMode(): void
     {
         $this->asyncMode = true;
+        $this->syncScopedInstances = [];
 
         $config = $this->resolved('config') ? $this->make('config') : null;
 
@@ -273,6 +288,11 @@ class AsyncApplication extends Application
      * otherwise ignore the replacement entirely. A shared alias replaced from inside a request
      * is shared too, which is what a shared service is; async.diagnostics reports it once.
      *
+     * A transient alias replaced inside a request (neither per-request nor shared, as laravel/mcp's
+     * Request) keeps the object for the rest of that request, as under php-fpm, and every other request
+     * goes on building its own. Like a per-request replacement, it is the whole request's: a child
+     * coroutine's instance() and forgetInstance() are seen by its siblings.
+     *
      * 'request' is exempt from both: the kernel rebinds it on every request, and that is the
      * scoping working, not somebody overriding it.
      */
@@ -281,6 +301,8 @@ class AsyncApplication extends Application
         $alias = $this->getAlias($abstract);
 
         if (! $this->asyncMode) {
+            unset($this->syncScopedInstances[$alias]);
+
             return parent::instance($abstract, $instance);
         }
 
@@ -290,12 +312,23 @@ class AsyncApplication extends Application
             return $this->replaceRequest($abstract, $instance, $context);
         }
 
-        $key = $this->perRequestKey($alias);
-
         if ($context === root_context()) {
             $this->replacedInstances[$alias] = true;
 
             return parent::instance($abstract, $instance);
+        }
+
+        // Asked first: for a #[Scoped] class nobody has resolved yet, this is what puts it on Laravel's
+        // scoped list, which perRequestKey() reads. A deferred service counts as shared: its provider
+        // registers it as a singleton the moment anything makes it.
+        $shared = $this->isShared($alias) || $this->isDeferredService($alias);
+        $key = $this->perRequestKey($alias);
+
+        if ($key === null && ! $shared) {
+            $context->set($alias, $instance, replace: true);
+            $this->requestLocalAliases[$alias] = true;
+
+            return $instance;
         }
 
         if ($key !== null) {
@@ -345,6 +378,10 @@ class AsyncApplication extends Application
             return true;
         }
 
+        if (! $this->asyncMode && isset($this->scopedBindings[$alias])) {
+            return true;
+        }
+
         return parent::bound($abstract) || $this->requestHolds($alias);
     }
 
@@ -355,11 +392,11 @@ class AsyncApplication extends Application
      */
     public function resolved($abstract)
     {
-        if (! $this->asyncMode) {
-            return parent::resolved($abstract);
-        }
-
         $alias = $this->getAlias($abstract);
+
+        if (! $this->asyncMode) {
+            return parent::resolved($abstract) || isset($this->syncScopedInstances[$alias]);
+        }
 
         // perRequestKey() asks this question about 'config'.
         if ($alias === 'config') {
@@ -373,7 +410,7 @@ class AsyncApplication extends Application
         $key = $this->perRequestKey($alias);
 
         if ($key === null) {
-            return parent::resolved($abstract);
+            return $this->requestLocalInstance($alias) !== null || parent::resolved($abstract);
         }
 
         return RequestContext::current()->find($key) !== null
@@ -395,9 +432,17 @@ class AsyncApplication extends Application
 
                 return;
             }
+
+            // By what the request holds: an alias that became shared since its last request-local
+            // replacement is replaced, and forgotten, for the worker.
+            if ($this->requestLocalInstance($alias) !== null) {
+                RequestContext::current()->unset($alias);
+
+                return;
+            }
         }
 
-        unset($this->replacedInstances[$alias]);
+        unset($this->replacedInstances[$alias], $this->syncScopedInstances[$alias]);
 
         parent::forgetInstance($abstract);
     }
@@ -413,7 +458,25 @@ class AsyncApplication extends Application
 
         $key = $this->perRequestKey($alias);
 
-        return $key !== null && RequestContext::current()->find($key) !== null;
+        if ($key === null) {
+            return $this->requestLocalInstance($alias) !== null;
+        }
+
+        return RequestContext::current()->find($key) !== null;
+    }
+
+    /**
+     * The current request's own replacement of a transient alias, or null.
+     */
+    private function requestLocalInstance(string $alias): ?object
+    {
+        if (! isset($this->requestLocalAliases[$alias])) {
+            return null;
+        }
+
+        $instance = RequestContext::current()->find($alias);
+
+        return is_object($instance) ? $instance : null;
     }
 
     private function reportSharedReplacement(string $alias): void
@@ -464,7 +527,15 @@ class AsyncApplication extends Application
         // object every time and never caches. Serving it from the context would hand
         // back an object built for somebody else's parameters.
         if ($this->asyncMode && $parameters === []) {
-            $instance = $this->tryResolveScoped($alias);
+            $instance = $this->tryResolveScoped($alias) ?? $this->requestLocalInstance($alias);
+
+            if ($instance !== null) {
+                return $instance;
+            }
+        }
+
+        if (! $this->asyncMode && $parameters === [] && isset($this->scopedBindings[$alias])) {
+            $instance = $this->resolveScopedOutsideAsync($alias);
 
             if ($instance !== null) {
                 return $instance;
@@ -472,6 +543,45 @@ class AsyncApplication extends Application
         }
 
         return parent::resolve($abstract, $parameters, $raiseEvents);
+    }
+
+    /**
+     * A scopedSingleton() alias outside async mode, when nothing else binds it: built through its scoped
+     * factory and kept until forgetScopedInstances(), which is what Laravel's scoped() gives a command or
+     * a queue job. A binding of its own wins, as scopedSingleton() promises. A null answer is not kept and
+     * leaves the alias unresolved, as in async mode.
+     */
+    private function resolveScopedOutsideAsync(string $alias): mixed
+    {
+        if (parent::bound($alias)) {
+            return null;
+        }
+
+        if (isset($this->syncScopedInstances[$alias])) {
+            return $this->syncScopedInstances[$alias];
+        }
+
+        $built = ($this->scopedBindings[$alias])($this);
+
+        if ($built === null) {
+            return null;
+        }
+
+        foreach ($this->getExtenders($alias) as $extender) {
+            $built = $extender($built, $this);
+        }
+
+        $this->syncScopedInstances[$alias] = $built;
+        $this->fireResolvingCallbacks($alias, $built);
+
+        return $built;
+    }
+
+    public function forgetScopedInstances()
+    {
+        parent::forgetScopedInstances();
+
+        $this->syncScopedInstances = [];
     }
 
     /**

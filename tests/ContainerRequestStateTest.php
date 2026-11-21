@@ -179,6 +179,160 @@ class ContainerRequestStateTest extends AsyncTestCase
 
         $this->assertSame(['a' => ['a', 'a'], 'b' => ['b', 'b']], $results);
     }
+
+    // ── instance() on a transient service inside a request ───────────────────
+
+    /**
+     * Under php-fpm instance() lasts the rest of the request; a transient service replaced inside one request
+     * must not become every request's. laravel/mcp's ReadResource does this with its Request.
+     */
+    public function test_a_transient_service_replaced_in_a_request_stays_in_that_request(): void
+    {
+        $app = $this->container();
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => function () use ($app) {
+                $override = new Payload();
+                $app->instance(Payload::class, $override);
+                delay(30);
+                $same = $app->make(Payload::class) === $override;
+                $app->forgetInstance(Payload::class);
+
+                return [$same, $app->make(Payload::class) === $override];
+            },
+            'b' => function () use ($app) {
+                delay(10);
+
+                return [$app->bound(Payload::class), $app->make(Payload::class) === $app->make(Payload::class)];
+            },
+        ]);
+
+        $this->assertSame([true, false], $results['a']);
+        $this->assertSame([false, false], $results['b'], "request b got request a's override or one shared object");
+
+        $later = $this->runParallel(['c' => fn () => $app->make(Payload::class) !== $app->make(Payload::class)]);
+        $this->assertTrue($later['c'], 'the service stays transient');
+    }
+
+    public function test_a_transient_service_made_twice_in_a_request_runs_its_resolving_callbacks_twice(): void
+    {
+        $app = $this->container();
+        $step = 0;
+        $app->resolving(Payload::class, function (Payload $payload) use (&$step) {
+            $payload->step = ++$step;
+        });
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => function () use ($app) {
+                $app->instance(Payload::class, new Payload());
+                $app->forgetInstance(Payload::class);
+
+                return [$app->make(Payload::class)->step, $app->make(Payload::class)->step];
+            },
+        ]);
+
+        $this->assertSame([1, 2], $results['a']);
+    }
+
+    /** A later singleton() makes the service shared: a replacement then is the worker's, and so is its removal. */
+    public function test_forgetting_a_service_that_became_shared_drops_the_workers_replacement(): void
+    {
+        $app = $this->container();
+        $app->enableAsyncMode();
+
+        $this->runParallel(['a' => fn () => $app->instance(Payload::class, new Payload())]);
+        $app->singleton(Payload::class);
+
+        $override = new Payload();
+        $this->runParallel([
+            'b' => function () use ($app, $override) {
+                $app->instance(Payload::class, $override);
+                $app->forgetInstance(Payload::class);
+            },
+        ]);
+
+        $results = $this->runParallel(['c' => fn () => $app->make(Payload::class) === $override]);
+        $this->assertFalse($results['c']);
+    }
+
+    public function test_a_scoped_attribute_class_replaced_before_its_first_resolve_stays_in_the_request(): void
+    {
+        $app = $this->container();
+        $app->enableAsyncMode();
+
+        $override = new ScopedPayload();
+        $this->runParallel(['a' => fn () => $app->instance(ScopedPayload::class, $override)]);
+        $results = $this->runParallel(['b' => fn () => $app->make(ScopedPayload::class) === $override]);
+
+        $this->assertFalse($results['b']);
+    }
+
+    // ── scopedSingleton() with no binding, outside async mode ────────────────
+
+    public function test_a_scoped_singleton_without_a_binding_resolves_outside_async_mode(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton('tenant.state', fn () => new Payload());
+
+        $this->assertTrue($app->bound('tenant.state'));
+        $this->assertSame($app->make('tenant.state'), $app->make('tenant.state'));
+    }
+
+    /** A queue worker calls forgetScopedInstances() between jobs; the next job builds its own. */
+    public function test_forgetting_scoped_instances_rebuilds_a_scoped_singleton(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton('tenant.state', fn () => new Payload());
+
+        $first = $app->make('tenant.state');
+        $app->forgetScopedInstances();
+
+        $this->assertNotSame($first, $app->make('tenant.state'));
+    }
+
+    public function test_a_scoped_singleton_answering_null_is_not_kept(): void
+    {
+        $app = $this->container();
+        $current = null;
+        $app->scopedSingleton('current.thing', function () use (&$current) {
+            return $current;
+        });
+
+        $current = new Payload();
+        $first = $app->make('current.thing');
+        $app->forgetScopedInstances();
+        $current = new Payload();
+
+        $this->assertNotSame($first, $app->make('current.thing'));
+    }
+
+    public function test_in_async_mode_a_scoped_singleton_is_per_request(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton('tenant.state', fn () => new Payload());
+        $boot = $app->make('tenant.state');
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => fn () => $app->make('tenant.state'),
+            'b' => fn () => $app->make('tenant.state'),
+        ]);
+
+        $this->assertNotSame($results['a'], $results['b']);
+        $this->assertNotSame($boot, $results['a']);
+    }
+}
+
+final class Payload
+{
+    public int $step = 0;
+}
+
+#[\Illuminate\Container\Attributes\Scoped]
+final class ScopedPayload
+{
 }
 
 final class RequestCounter

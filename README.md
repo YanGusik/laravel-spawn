@@ -227,7 +227,9 @@ $this->app->scoped(TenantContext::class, fn ($app) => new TenantContext($app['re
 
 **`scopedSingleton()`**, when a shared binding has to stay in place: the factory here is
 used for the per-request build only, and whatever bootstrap resolved through the original
-binding stays reachable through `scopedPrototype()`. That is how this package scopes `url`
+binding stays reachable through `scopedPrototype()`. Without a binding of its own, outside
+async mode (boot, artisan, a queue job) the factory serves as Laravel's `scoped()` would:
+one object until `forgetScopedInstances()`. That is how this package scopes `url`
 without losing `URL::forceScheme()` and the other setters a provider called at boot.
 
 ```php
