@@ -2823,7 +2823,7 @@ abstract class Model implements Arrayable, ArrayAccess, CanBeEscapedWhenCastToSt
      */
     public function offsetExists($offset): bool
     {
-        if (! static::preventsAccessingMissingAttributes()) {
+        if (! static::$modelsShouldPreventAccessingMissingAttributes) {
             return ! is_null($this->getAttribute($offset));
         }
 

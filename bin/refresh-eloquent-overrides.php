@@ -18,9 +18,9 @@
  * The vendor directory defaults to the package's own; another one, holding a different Laravel
  * release, takes the copies for that release without reinstalling the package.
  *
- * Every replacement below is asserted, and so is the number of times each replaced static
- * appears in the Laravel file: a release that adds a reader or a writer of one outside the
- * edited lines would leave the copy covering part of it. When an assertion fails, the script
+ * Every replacement below is asserted, and so is the number of times Eloquent reaches each
+ * replaced static, in any of its files: a release that adds a reader or a writer of one outside
+ * the edited lines would leave the copy covering part of it. When an assertion fails, the script
  * names it and leaves that file's copy unwritten: Laravel has changed that code, and the edit
  * has to be redone by hand rather than guessed. The copies of the other files are still
  * written, because the groups are installed independently, and the script exits non-zero.
@@ -50,19 +50,39 @@ $release = $version[1];
 $failures = [];
 
 /**
+ * How many times Eloquent reaches a static property by name — `static::$name`, `self::$name`,
+ * `Model::$name`, `$model::$name` — in any of its files.
+ */
+function staticUses(string $property): int
+{
+    global $eloquent;
+
+    $uses = 0;
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($eloquent, FilesystemIterator::SKIP_DOTS));
+
+    foreach ($files as $file) {
+        if ($file->getExtension() === 'php') {
+            $uses += preg_match_all('/::\$'.preg_quote($property, '/').'\b/', file_get_contents($file->getPathname()));
+        }
+    }
+
+    return $uses;
+}
+
+/**
  * The Laravel file with the edits applied, or null when one no longer matches; the mismatch is
  * then printed and kept in $failures.
  *
  * @param  list<array{0: string, 1: string}>  $replacements
- * @param  array<string, int>  $occurrences  text => how many times the Laravel file has it
+ * @param  array<string, int>  $uses  static property => how many times Eloquent reaches it
  */
-function rewrite(string $source, array $replacements, string $what, array $occurrences = []): ?string
+function rewrite(string $source, array $replacements, string $what, array $uses = []): ?string
 {
     global $failures;
 
-    foreach ($occurrences as $text => $times) {
-        if (substr_count($source, $text) !== $times) {
-            $failures[$what] = "$text no longer appears $times times: a reader or a writer was added or removed";
+    foreach ($uses as $property => $times) {
+        if (staticUses($property) !== $times) {
+            $failures[$what] = "Eloquent no longer reaches \$$property $times times: a reader or a writer was added or removed";
             fwrite(STDERR, "$what: {$failures[$what]}, redo the edit by hand.\n");
 
             return null;
@@ -378,7 +398,7 @@ PHP,
         'return array_any(static::$ignoreTimestampsOn, fn ($ignoredClass) => $class === $ignoredClass || is_subclass_of($class, $ignoredClass));',
         'return IgnoredClassesWindow::ignores(IgnoredClassesWindow::TIMESTAMPS, $class, static::$ignoreTimestampsOn);',
     ],
-], 'HasTimestamps', ['static::$ignoreTimestampsOn' => 5]);
+], 'HasTimestamps', ['ignoreTimestampsOn' => 5]);
 
 // --- BroadcastsEvents: the broadcast gate reads the coroutine's window ----------------------
 
@@ -391,7 +411,7 @@ $broadcastsEvents = rewrite(file_get_contents($eloquent.'/BroadcastsEvents.php')
         'if (! static::$isBroadcasting) {',
         'if (! BroadcastWindow::isBroadcasting(static::$isBroadcasting)) {',
     ],
-], 'BroadcastsEvents', ['static::$isBroadcasting' => 1]);
+], 'BroadcastsEvents', ['isBroadcasting' => 4]);
 
 // --- Model: touching, broadcasting and the isset() strict-mode switch move into the coroutine
 
@@ -464,7 +484,7 @@ PHP,
         }
 PHP,
         <<<'PHP'
-        if (! static::preventsAccessingMissingAttributes()) {
+        if (! static::$modelsShouldPreventAccessingMissingAttributes) {
             return ! is_null($this->getAttribute($offset));
         }
 
@@ -475,9 +495,9 @@ PHP,
 PHP,
     ],
 ], 'Model', [
-    'static::$ignoreOnTouch' => 5,
-    'static::$isBroadcasting' => 3,
-    'static::$modelsShouldPreventAccessingMissingAttributes' => 5,
+    'ignoreOnTouch' => 5,
+    'isBroadcasting' => 4,
+    'modelsShouldPreventAccessingMissingAttributes' => 5,
 ]);
 
 $written = 0;
