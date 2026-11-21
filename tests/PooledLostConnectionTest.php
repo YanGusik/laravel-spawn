@@ -115,4 +115,46 @@ class PooledLostConnectionTest extends AsyncTestCase
         $this->assertSame([], $this->admin->query('select id from spawn_lost')->fetchAll(PDO::FETCH_COLUMN),
             'a row of the rolled-back transaction was committed');
     }
+
+    /**
+     * The same with b opening a transaction: its BEGIN meets the killed slot, it reconnects and begins on
+     * the new handle, and a's transaction stays on the one it began on.
+     */
+    public function test_a_siblings_reconnect_on_begin_does_not_move_an_open_transaction(): void
+    {
+        $connection = new AsyncMySqlConnection($this->pool(), 'spawn', '', ['name' => 'mysql', 'driver' => 'mysql']);
+        $connection->setReconnector(fn (Connection $connection) => $connection->setPdo($this->pool()));
+        $connection->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($connection) {
+                $connection->beginTransaction();
+                $began = $connection->getPdo();
+                $connection->insert('insert into spawn_lost (id) values (1)');
+                $this->killIdleThreads([(int) $connection->selectOne('select connection_id() as id')->id]);
+                delay(100);
+                $connection->insert('insert into spawn_lost (id) values (2)');
+                $same = $connection->getPdo() === $began;
+                $connection->rollBack();
+
+                return $same;
+            },
+            'b' => function () use ($connection) {
+                delay(30);
+
+                return $connection->transaction(function (Connection $connection) {
+                    $connection->insert('insert into spawn_lost (id) values (3)');
+
+                    return true;
+                });
+            },
+        ]);
+
+        $this->assertTrue($results['a'], 'the transaction moved to another handle');
+        $this->assertTrue($results['b']);
+        $rows = $this->admin->query('select id from spawn_lost')->fetchAll(PDO::FETCH_COLUMN);
+
+        $this->assertSame([3], array_map('intval', $rows),
+            'a row of the rolled-back transaction was committed, or the sibling transaction was lost');
+    }
 }

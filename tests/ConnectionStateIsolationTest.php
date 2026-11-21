@@ -476,6 +476,38 @@ class ConnectionStateIsolationTest extends AsyncTestCase
         $this->assertSame(['BEGIN', 'update users set name = ?'], $pdo->log);
     }
 
+    public function test_a_savepoint_lost_with_the_connection_marks_the_transaction_lost(): void
+    {
+        $pdo = new RecordingPdo();
+        $connection = new AsyncMySqlConnection($pdo, 'test', '', ['name' => 'test']);
+        $connection->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($connection, $pdo) {
+                $connection->beginTransaction();
+                $pdo->loseNextStatement = true;
+
+                try {
+                    $connection->beginTransaction();
+                } catch (\PDOException) {
+                }
+
+                try {
+                    $connection->statement('update users set name = ?', ['after']);
+                    $after = 'ran';
+                } catch (LostConnectionException) {
+                    $after = 'refused';
+                }
+
+                $connection->rollBack();
+
+                return ['after' => $after, 'level' => $connection->transactionLevel()];
+            },
+        ]);
+
+        $this->assertSame(['after' => 'refused', 'level' => 0], $results['a']);
+    }
+
     // ── Outside async mode ───────────────────────────────────────────────────
 
     public function test_outside_async_mode_the_state_stays_on_the_connection(): void
@@ -541,6 +573,7 @@ class RecordingPdo extends PDO
 
     public function exec(string $statement): int|false
     {
+        $this->loseIfAsked();
         $this->log[] = $statement;
 
         return 0;
@@ -548,12 +581,7 @@ class RecordingPdo extends PDO
 
     public function prepare(string $query, array $options = []): \PDOStatement|false
     {
-        if ($this->loseNextStatement) {
-            $this->loseNextStatement = false;
-
-            throw new \PDOException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away');
-        }
-
+        $this->loseIfAsked();
         $this->log[] = $query;
 
         return new class extends \PDOStatement {
@@ -567,5 +595,14 @@ class RecordingPdo extends PDO
                 return true;
             }
         };
+    }
+
+    private function loseIfAsked(): void
+    {
+        if ($this->loseNextStatement) {
+            $this->loseNextStatement = false;
+
+            throw new \PDOException('SQLSTATE[HY000]: General error: 2006 MySQL server has gone away');
+        }
     }
 }

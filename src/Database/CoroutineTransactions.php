@@ -264,9 +264,27 @@ trait CoroutineTransactions
     {
         $this->refuseLostTransaction();
 
-        $this->getPdo()->exec(
-            $this->queryGrammar->compileSavepoint('trans'.($this->transactionLevel() + 1))
-        );
+        try {
+            $this->getPdo()->exec(
+                $this->queryGrammar->compileSavepoint('trans'.($this->transactionLevel() + 1))
+            );
+        } catch (Throwable $e) {
+            $this->markLostTransaction($e);
+
+            throw $e;
+        }
+    }
+
+    /** Remember that the server dropped this coroutine's open transaction, when $e says so. */
+    private function markLostTransaction(?Throwable $e): void
+    {
+        if ($e === null || ! $this->isAsyncMode() || $this->transactionLevel() === 0) {
+            return;
+        }
+
+        if ($this->causedByLostConnection($e)) {
+            $this->coroutineState()->lost = true;
+        }
     }
 
     /** The direct DB::commit() path; transaction() carries the same steps for its own. */
@@ -501,9 +519,7 @@ trait CoroutineTransactions
         \Closure $callback
     ) {
         if ($this->transactionLevel() > 0) {
-            if ($this->isAsyncMode() && $this->causedByLostConnection($e->getPrevious())) {
-                $this->coroutineState()->lost = true;
-            }
+            $this->markLostTransaction($e->getPrevious());
 
             throw $e;
         }

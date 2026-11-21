@@ -392,7 +392,7 @@ trait PerRequestConnectionState
 
     private function runQueryDurationHandler(int $key, QueryExecuted $event): void
     {
-        // Gone when the handler moved to the connection that replaced this one.
+        // Gone once the connection that replaced this one took the handler over.
         if (! isset($this->queryDurationHandlers[$key])) {
             return;
         }
