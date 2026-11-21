@@ -54,8 +54,10 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
      */
     protected function constructorOptions(array $config): array
     {
+        $host = $this->formatHost($config);
+
         $options = [
-            'host' => $this->formatHost($config),
+            'host' => $host,
             // phpredis takes a host starting with `/` for a unix socket only with a port below 1,
             // and opens 6379 itself for a TCP host with port 0: what the stock connector's
             // missing port amounts to.
@@ -64,7 +66,9 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
                 'enabled' => true,
                 'min'     => (int) ($this->pool['min'] ?? 0),
                 'max'     => (int) ($this->pool['max'] ?? 10),
-                'mux'     => (int) ($this->pool['mux'] ?? 0),
+                // The multiplexed lanes read their sockets with plain recv(), past the stream's
+                // TLS layer, so a TLS connection with lanes would read ciphertext.
+                'mux'     => $this->usesTls($host, $config) ? 0 : (int) ($this->pool['mux'] ?? 0),
             ],
         ];
 
@@ -97,6 +101,17 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
         }
 
         return $options;
+    }
+
+    /**
+     * Whether the pool's connections speak TLS: a `tls://` or `ssl://` host, or any context,
+     * which phpredis takes for TLS on a host with no scheme.
+     */
+    private function usesTls(string $host, array $config): bool
+    {
+        $scheme = strtolower((string) parse_url($host, PHP_URL_SCHEME));
+
+        return in_array($scheme, ['tls', 'ssl'], true) || Arr::get($config, 'context') !== null;
     }
 
     /**
