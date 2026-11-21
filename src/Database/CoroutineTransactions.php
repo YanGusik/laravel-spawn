@@ -226,13 +226,15 @@ trait CoroutineTransactions
             return;
         }
 
-        $state = $this->coroutineState();
-        $state->pinned = null;
-        $state->pinned = $this->getPdo();
+        $this->coroutineState()->pinned = $this->resolveHandle('pdo');
     }
 
     private function releaseTransactionHandle(): void
     {
+        if (! $this->isAsyncMode()) {
+            return;
+        }
+
         $state = $this->coroutineState();
         $state->pinned = null;
         $state->lost = false;
@@ -251,6 +253,19 @@ trait CoroutineTransactions
                 .'back before running another statement on this connection.'
             );
         }
+    }
+
+    /**
+     * Laravel's, except inside a transaction: a sibling's disconnect() leaves the shared handle empty,
+     * and reconnecting would release the handle this coroutine's transaction is on.
+     */
+    public function reconnectIfMissingConnection()
+    {
+        if ($this->isAsyncMode() && $this->coroutineState()->pinned !== null) {
+            return;
+        }
+
+        parent::reconnectIfMissingConnection();
     }
 
     protected function run($query, $bindings, Closure $callback)
@@ -352,11 +367,12 @@ trait CoroutineTransactions
 
     protected function handleCommitTransactionException(\Throwable $e, $currentAttempt, $maxAttempts)
     {
+        // Taken before the level drops: at 0 the coroutine lets go of the handle its transaction is on.
+        $pdo = $this->getPdo();
+
         $this->setTransactionLevel(max(0, $this->transactionLevel() - 1));
 
         if ($this->causedByConcurrencyError($e) && $currentAttempt < $maxAttempts) {
-            $pdo = $this->getPdo();
-
             if ($pdo->inTransaction()) {
                 $pdo->rollBack();
             }

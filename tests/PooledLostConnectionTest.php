@@ -32,9 +32,9 @@ class PooledLostConnectionTest extends AsyncTestCase
 
         $dsn = getenv('SPAWN_TEST_MYSQL_DSN');
 
-        $available = is_string($dsn) && $dsn !== '' && extension_loaded('pdo_mysql') && defined('PDO::ATTR_POOL_ENABLED');
+        $configured = is_string($dsn) && $dsn !== '';
 
-        if (! $available) {
+        if (! $configured || ! extension_loaded('pdo_mysql') || ! defined('PDO::ATTR_POOL_ENABLED')) {
             $this->markTestSkipped('needs SPAWN_TEST_MYSQL_DSN, pdo_mysql and the PDO pool');
         }
 

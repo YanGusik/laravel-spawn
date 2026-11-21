@@ -308,7 +308,10 @@ trait PerRequestConnectionState
         return $this;
     }
 
-    /** For the calling coroutine, while the callback runs. */
+    /**
+     * For the calling coroutine, while the callback runs. Laravel 13.30.0, the floor, has no
+     * usingWritePdo() of its own, and nothing there calls this one.
+     */
     public function usingWritePdo(Closure $callback): mixed
     {
         if (! $this->isAsyncMode()) {

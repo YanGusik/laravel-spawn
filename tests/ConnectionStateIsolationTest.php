@@ -430,6 +430,33 @@ class ConnectionStateIsolationTest extends AsyncTestCase
         $this->assertTrue($results['b']);
     }
 
+    /** A sibling's disconnect() empties the shared handle; the transaction goes on, on its own. */
+    public function test_a_disconnect_by_a_sibling_leaves_an_open_transaction_on_its_handle(): void
+    {
+        $began = new RecordingPdo();
+        $connection = new AsyncMySqlConnection($began, 'test', '', ['name' => 'test']);
+        $connection->bootCompleted();
+
+        $fresh = new RecordingPdo();
+        $connection->setReconnector(fn (Connection $connection) => $connection->setPdo($fresh));
+
+        $this->runParallel([
+            'a' => function () use ($connection) {
+                $connection->beginTransaction();
+                delay(50);
+                $connection->statement('update users set name = ?', ['a']);
+                $connection->commit();
+            },
+            'b' => function () use ($connection) {
+                delay(10);
+                $connection->disconnect();
+            },
+        ]);
+
+        $this->assertSame(['BEGIN', 'update users set name = ?', 'COMMIT'], $began->log);
+        $this->assertSame([], $fresh->log);
+    }
+
     /**
      * The server dropped the transaction with the connection. A statement run after that would autocommit
      * on whatever link the pool hands out next, so it is refused until the transaction is rolled back.
