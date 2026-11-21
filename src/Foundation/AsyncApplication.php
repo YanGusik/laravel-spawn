@@ -108,6 +108,20 @@ class AsyncApplication extends Application
      */
     private array $syncScopedInstances = [];
 
+    /**
+     * The objects $syncScopedInstances held when async mode started: no request owns them, and the
+     * capture audit has to recognise one a singleton built at boot still holds.
+     *
+     * @var array<string, object>
+     */
+    private array $bootScopedObjects = [];
+
+    /** What 'request' answers outside any request once the container holds none. */
+    private ?\Illuminate\Http\Request $fallbackRequest = null;
+
+    /** facadeKeysOf() per alias; emptied by alias(). @var array<string, list<string>> */
+    private array $facadeKeys = [];
+
     public function __construct($basePath = null)
     {
         parent::__construct($basePath);
@@ -149,6 +163,7 @@ class AsyncApplication extends Application
     public function enableAsyncMode(): void
     {
         $this->asyncMode = true;
+        $this->bootScopedObjects = $this->syncScopedInstances;
         $this->syncScopedInstances = [];
 
         $config = $this->resolved('config') ? $this->make('config') : null;
@@ -199,6 +214,16 @@ class AsyncApplication extends Application
     public function extend($abstract, Closure $closure)
     {
         $alias = $this->getAlias($abstract);
+
+        // The object Laravel's scoped() would hold in $this->instances, and the extender for the next
+        // one built after forgetScopedInstances().
+        if (! $this->asyncMode && isset($this->syncScopedInstances[$alias])) {
+            $this->extenders[$alias][] = $closure;
+            $this->syncScopedInstances[$alias] = $closure($this->syncScopedInstances[$alias], $this);
+            $this->rebound($alias);
+
+            return;
+        }
 
         if (! isset($this->instances[$alias]) || ! $this->isScopedAlias($alias)) {
             parent::extend($abstract, $closure);
@@ -291,7 +316,8 @@ class AsyncApplication extends Application
      * A transient alias replaced inside a request (neither per-request nor shared, as laravel/mcp's
      * Request) keeps the object for the rest of that request, as under php-fpm, and every other request
      * goes on building its own. Like a per-request replacement, it is the whole request's: a child
-     * coroutine's instance() and forgetInstance() are seen by its siblings.
+     * coroutine's instance() and forgetInstance() are seen by its siblings, and no rebinding callback
+     * runs for it.
      *
      * 'request' is exempt from both: the kernel rebinds it on every request, and that is the
      * scoping working, not somebody overriding it.
@@ -404,7 +430,8 @@ class AsyncApplication extends Application
         }
 
         if ($alias === 'request') {
-            return RequestContext::current()->find(ScopedService::REQUEST) !== null || isset($this->instances['request']);
+            return RequestContext::current()->find(ScopedService::REQUEST) !== null
+                || isset($this->instances['request']);
         }
 
         $key = $this->perRequestKey($alias);
@@ -424,7 +451,12 @@ class AsyncApplication extends Application
     {
         $alias = $this->getAlias($abstract);
 
-        if ($this->asyncMode && $alias !== 'request' && RequestContext::current() !== root_context()) {
+        if ($this->asyncMode && RequestContext::current() !== root_context()) {
+            // The server's request is the answer for the rest of the request.
+            if ($alias === 'request') {
+                return;
+            }
+
             $key = $this->perRequestKey($alias);
 
             if ($key !== null) {
@@ -466,17 +498,16 @@ class AsyncApplication extends Application
     }
 
     /**
-     * The current request's own replacement of a transient alias, or null.
+     * The current request's own replacement of a transient alias, or null. Any value instance() was
+     * given: a path, an array and a closure are replacements as much as an object.
      */
-    private function requestLocalInstance(string $alias): ?object
+    private function requestLocalInstance(string $alias): mixed
     {
         if (! isset($this->requestLocalAliases[$alias])) {
             return null;
         }
 
-        $instance = RequestContext::current()->find($alias);
-
-        return is_object($instance) ? $instance : null;
+        return RequestContext::current()->find($alias);
     }
 
     private function reportSharedReplacement(string $alias): void
@@ -527,7 +558,12 @@ class AsyncApplication extends Application
         // object every time and never caches. Serving it from the context would hand
         // back an object built for somebody else's parameters.
         if ($this->asyncMode && $parameters === []) {
-            $instance = $this->tryResolveScoped($alias) ?? $this->requestLocalInstance($alias);
+            $instance = $this->tryResolveScoped($alias);
+
+            // A contextual binding outranks a replacement, as it outranks an instance() in Laravel.
+            if ($instance === null && $this->getContextualConcrete($alias) === null) {
+                $instance = $this->requestLocalInstance($alias);
+            }
 
             if ($instance !== null) {
                 return $instance;
@@ -567,12 +603,19 @@ class AsyncApplication extends Application
             return null;
         }
 
-        foreach ($this->getExtenders($alias) as $extender) {
-            $built = $extender($built, $this);
-        }
+        $built = $this->applyExtenders($alias, $built);
 
         $this->syncScopedInstances[$alias] = $built;
         $this->fireResolvingCallbacks($alias, $built);
+
+        return $built;
+    }
+
+    private function applyExtenders(string $alias, mixed $built): mixed
+    {
+        foreach ($this->getExtenders($alias) as $extender) {
+            $built = $extender($built, $this);
+        }
 
         return $built;
     }
@@ -582,6 +625,21 @@ class AsyncApplication extends Application
         parent::forgetScopedInstances();
 
         $this->syncScopedInstances = [];
+    }
+
+    public function forgetInstances()
+    {
+        parent::forgetInstances();
+
+        $this->syncScopedInstances = [];
+    }
+
+    public function flush()
+    {
+        parent::flush();
+
+        $this->syncScopedInstances = [];
+        $this->facadeKeys = [];
     }
 
     /**
@@ -596,8 +654,13 @@ class AsyncApplication extends Application
             }
         }
 
-        return $this->instances['request']
-            ?? \Illuminate\Http\Request::createFromGlobals();
+        if (isset($this->instances['request'])) {
+            return $this->instances['request'];
+        }
+
+        // One for every caller outside a request, as the container's own instance would be: what a
+        // caller sets on it is there for the next one.
+        return $this->fallbackRequest ??= \Illuminate\Http\Request::createFromGlobals();
     }
 
     /**
@@ -656,11 +719,7 @@ class AsyncApplication extends Application
             // concrete alone would silently drop them for scoped services only. They run
             // before seeding, because a decorating extender replaces the object and the
             // registrations have to land on whatever the coroutine will actually use.
-            foreach ($this->getExtenders($alias) as $extender) {
-                $built = $extender($built, $this);
-            }
-
-            return $built;
+            return $this->applyExtenders($alias, $built);
         });
 
         if ($instance === null) {
@@ -1027,6 +1086,10 @@ class AsyncApplication extends Application
                 $objects[] = $this->scopedPrototypes[$alias];
             }
 
+            if (isset($this->bootScopedObjects[$alias])) {
+                $objects[] = $this->bootScopedObjects[$alias];
+            }
+
             if ($objects !== []) {
                 $identity[$alias] = $objects;
             }
@@ -1170,6 +1233,10 @@ class AsyncApplication extends Application
      */
     private function facadeKeysOf(string $alias): array
     {
+        if (isset($this->facadeKeys[$alias])) {
+            return $this->facadeKeys[$alias];
+        }
+
         $keys = [$alias];
 
         for ($i = 0; $i < count($keys); $i++) {
@@ -1180,7 +1247,14 @@ class AsyncApplication extends Application
             }
         }
 
-        return $keys;
+        return $this->facadeKeys[$alias] = $keys;
+    }
+
+    public function alias($abstract, $alias)
+    {
+        parent::alias($abstract, $alias);
+
+        $this->facadeKeys = [];
     }
 
     /**
@@ -1228,8 +1302,9 @@ class AsyncApplication extends Application
      * earliest place to do it is the first middleware, which is why
      * {@see \Spawn\Laravel\Http\Middleware\RestorePerRequestFacades} exists.
      *
-     * Entries already in place are left alone, so this costs one hash lookup per
-     * per-request alias and no allocation in the normal case.
+     * Entries already in place are left alone, so this costs one hash lookup per name of
+     * each per-request alias and no allocation in the normal case: the names are worked
+     * out once per alias, again only after alias() registers another.
      */
     public function restorePerRequestFacades(): void
     {

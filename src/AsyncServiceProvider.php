@@ -397,8 +397,8 @@ class AsyncServiceProvider extends ServiceProvider
         // request there is nothing to keep in step: it is constructed with the request it
         // belongs to, and no rebinding moves it onto another.
         // The stock factory publishes the collection so that rebinding('routes') has
-        // something to rebind. It is the router's own object and never changes, so it is
-        // published once, at boot: inside a request instance() would keep it in that request.
+        // something to rebind. Published at boot: inside a request instance() would keep it
+        // in that request. Router::setRoutes() republishes a collection loaded from the cache.
         $this->app->booted(function ($app) {
             if (! $app->bound('routes')) {
                 $app->instance('routes', $app['router']->getRoutes());

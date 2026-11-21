@@ -6,6 +6,8 @@ use Illuminate\Config\Repository;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Facade;
 use Spawn\Laravel\Foundation\AsyncApplication;
+use Spawn\Laravel\Foundation\RequestContext;
+use Spawn\Laravel\Foundation\ScopedService;
 
 use function Async\delay;
 use function Async\spawn;
@@ -134,9 +136,7 @@ class ContainerRequestStateTest extends AsyncTestCase
         $results = $this->runParallel([
             'a' => function () use ($app) {
                 $request = Request::create('https://served.test/');
-                \Spawn\Laravel\Foundation\RequestContext::current()->set(
-                    \Spawn\Laravel\Foundation\ScopedService::REQUEST, $request
-                );
+                RequestContext::current()->set(ScopedService::REQUEST, $request);
                 $app->forgetInstance('request');
 
                 return $app->make('request') === $request;
@@ -322,6 +322,81 @@ class ContainerRequestStateTest extends AsyncTestCase
 
         $this->assertNotSame($results['a'], $results['b']);
         $this->assertNotSame($boot, $results['a']);
+    }
+
+    public function test_a_value_that_is_not_an_object_replaced_in_a_request_reads_back(): void
+    {
+        $app = $this->container();
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => function () use ($app) {
+                $app->instance('probe.path', '/x');
+
+                return [$app->bound('probe.path'), $app->make('probe.path')];
+            },
+        ]);
+
+        $this->assertSame([true, '/x'], $results['a']);
+    }
+
+    public function test_extending_a_resolved_scoped_singleton_outside_async_mode_decorates_it(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton('tenant.state', fn () => new Payload());
+        $app->make('tenant.state');
+
+        $app->extend('tenant.state', function (Payload $payload) {
+            $payload->step = 7;
+
+            return $payload;
+        });
+
+        $this->assertSame(7, $app->make('tenant.state')->step);
+        $app->forgetScopedInstances();
+        $this->assertSame(7, $app->make('tenant.state')->step, 'the next one built is extended too');
+    }
+
+    public function test_forgetting_instances_and_flushing_drop_a_scoped_singleton(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton('tenant.state', fn () => new Payload());
+
+        $first = $app->make('tenant.state');
+        $app->forgetInstances();
+        $this->assertNotSame($first, $app->make('tenant.state'));
+
+        $app->flush();
+        $this->assertFalse($app->resolved('tenant.state'));
+    }
+
+    public function test_outside_any_request_the_request_is_one_object(): void
+    {
+        $app = $this->container();
+        $app->enableAsyncMode();
+
+        $this->assertSame($app->make('request'), $app->make('request'));
+    }
+
+    /** AsyncRouter's Route factory reads the route the context holds; a second dispatch gets its own. */
+    public function test_a_scoped_singleton_reading_the_context_is_not_kept_across_dispatches(): void
+    {
+        $app = $this->container();
+        $app->scopedSingleton(
+            \Illuminate\Routing\Route::class,
+            fn () => RequestContext::current()->find('probe.route'),
+        );
+
+        $first = new \Illuminate\Routing\Route('GET', '/a', []);
+        RequestContext::current()->set('probe.route', $first, replace: true);
+        $this->assertSame($first, $app->make(\Illuminate\Routing\Route::class));
+        $app->forgetScopedInstances();
+
+        $second = new \Illuminate\Routing\Route('GET', '/b', []);
+        RequestContext::current()->set('probe.route', $second, replace: true);
+        $this->assertSame($second, $app->make(\Illuminate\Routing\Route::class));
+
+        RequestContext::current()->unset('probe.route');
     }
 }
 
