@@ -196,6 +196,21 @@ class RedisPoolTest extends AsyncTestCase
     }
 
     /**
+     * The rate limiter's raw pool opens nothing until a window sends a command: no warm sockets
+     * and no multiplexed lanes, whatever the configured pool keeps.
+     */
+    public function test_the_raw_pool_keeps_no_warm_sockets_and_no_lanes(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true, 'min' => 3, 'max' => 8, 'mux' => 2]);
+
+        $options = (fn (array $config) => $this->rawConstructorOptions($config))
+            ->call($connector, ['host' => 'redis.internal', 'port' => 6380, 'database' => 2]);
+
+        $this->assertSame(['enabled' => true, 'min' => 0, 'max' => 8, 'mux' => 0], $options['pool']);
+        $this->assertSame(['redis.internal', 6380, 2], [$options['host'], $options['port'], $options['database']]);
+    }
+
+    /**
      * phpredis takes a host starting with `/` for a unix socket only when the port is below 1,
      * and opens 6379 itself for a TCP host with port 0 — which is what the stock connector's
      * missing port amounts to.

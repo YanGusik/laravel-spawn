@@ -39,7 +39,7 @@ class AsyncPhpRedisConnection extends PhpRedisConnection
      * @var \Redis
      */
     protected $client {
-        get => $this->openWindows > 0 && coroutine_context()->findLocal($this) === true
+        get => $this->openWindows > 0 && coroutine_context()->findLocal($this->windowKey) === true
             ? $this->raw
             : $this->client;
     }
@@ -50,12 +50,19 @@ class AsyncPhpRedisConnection extends PhpRedisConnection
     private Redis $raw;
 
     /**
+     * The window's key in the coroutine's context: a string rather than the connection
+     * itself, so that a context outliving the connection does not keep it alive.
+     */
+    private readonly string $windowKey;
+
+    /**
      * @param  Closure(): Redis  $rawConnector  builds the raw client
      */
     public function __construct($client, callable $connector, array $config, private readonly Closure $rawConnector)
     {
         parent::__construct($client, $connector, $config);
 
+        $this->windowKey = 'spawn.redis.raw-window.'.spl_object_id($this);
         $this->raw = ($this->rawConnector)();
     }
 
@@ -75,16 +82,31 @@ class AsyncPhpRedisConnection extends PhpRedisConnection
         }
 
         $context = coroutine_context();
-        $previous = $context->findLocal($this);
+        $previous = $context->findLocal($this->windowKey);
 
-        $context->set($this, true, true);
+        $context->set($this->windowKey, true, true);
         $this->openWindows++;
 
         try {
             return $callback();
         } finally {
             $this->openWindows--;
-            $context->set($this, $previous, true);
+            $context->set($this->windowKey, $previous, true);
+        }
+    }
+
+    /**
+     * Close the raw pool with the configured one, so that a purged connection leaves no idle
+     * sockets behind.
+     */
+    public function disconnect()
+    {
+        parent::disconnect();
+
+        try {
+            $this->raw->close();
+        } catch (Throwable) {
+            //
         }
     }
 

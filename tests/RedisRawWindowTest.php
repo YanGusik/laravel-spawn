@@ -134,6 +134,29 @@ class RedisRawWindowTest extends AsyncTestCase
     }
 
     /**
+     * A lost connection inside a window is the raw client's, and rebuilding it must leave the
+     * client every other coroutine is using alone.
+     */
+    public function test_a_lost_connection_inside_the_window_rebuilds_only_the_raw_client(): void
+    {
+        /** @var PhpRedisConnection $connection */
+        $connection = $this->manager->connection();
+        $configured = $connection->client();
+
+        [$before, $after] = $connection->withoutSerializationOrCompression(function () use ($connection) {
+            $before = $connection->client();
+            (fn () => $this->rebuildClient())->call($connection);
+
+            return [$before, $connection->client()];
+        });
+
+        $this->assertNotSame($configured, $before, 'the window answers with the raw client');
+        $this->assertNotSame($before, $after, 'the raw client is rebuilt');
+        $this->assertSame($configured, $connection->client(), 'the configured client is untouched');
+        $this->assertTrue($connection->serialized());
+    }
+
+    /**
      * The shape of the report in #85: a throttled request next to a cached read, many times
      * over.
      */

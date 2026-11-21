@@ -73,11 +73,7 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
      */
     protected function createRawClient(array $config): Redis
     {
-        $options = $this->constructorOptions($config);
-        $options['pool']['min'] = 0;
-        $options['pool']['mux'] = 0;
-
-        $client = new Redis($options);
+        $client = new Redis($this->rawConstructorOptions($config));
 
         $this->applyTemplateOptions($client, array_merge($config, [
             'serializer' => Redis::SERIALIZER_NONE,
@@ -85,6 +81,19 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
         ]));
 
         return $client;
+    }
+
+    /**
+     * The raw pool's constructor options: the configured ones with no multiplexed lanes and no
+     * warm sockets, so that it opens nothing until a window sends a command.
+     */
+    protected function rawConstructorOptions(array $config): array
+    {
+        $options = $this->constructorOptions($config);
+        $options['pool']['min'] = 0;
+        $options['pool']['mux'] = 0;
+
+        return $options;
     }
 
     /**
