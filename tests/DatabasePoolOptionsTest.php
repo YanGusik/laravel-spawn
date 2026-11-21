@@ -110,4 +110,74 @@ class DatabasePoolOptionsTest extends AsyncTestCase
         $this->assertNotEmpty($app->make('config')->get('database.connections.memory.options'),
             'the pool options still go on: a shared handle is the defect the pool prevents');
     }
+
+    /**
+     * Laravel merges a read or write entry over the connection with array_merge(), so an entry that names
+     * its own options replaces the top-level ones the pool attributes are put in.
+     */
+    public function test_read_write_and_direct_entries_with_their_own_options_keep_the_pool(): void
+    {
+        $app = $this->appWithConfig([
+            'async' => ['db_pool' => ['enabled' => true]],
+            'database' => ['connections' => ['mysql' => [
+                'driver' => 'mysql',
+                'read' => [['host' => 'r1', 'options' => []], ['host' => 'r2']],
+                'write' => ['host' => 'w', 'options' => [PDO::ATTR_TIMEOUT => 3]],
+                'direct' => ['host' => 'd', 'options' => []],
+            ]]],
+        ]);
+
+        WorkerBootstrap::run($app);
+
+        $connection = $app->make('config')->get('database.connections.mysql');
+
+        $this->assertTrue($connection['read'][0]['options'][PDO::ATTR_POOL_ENABLED] ?? false);
+        $this->assertArrayNotHasKey('options', $connection['read'][1], 'an entry without options inherits them');
+        $this->assertTrue($connection['write']['options'][PDO::ATTR_POOL_ENABLED] ?? false);
+        $this->assertSame(3, $connection['write']['options'][PDO::ATTR_TIMEOUT], 'its own options stay');
+        $this->assertTrue($connection['direct']['options'][PDO::ATTR_POOL_ENABLED] ?? false);
+    }
+
+    /**
+     * A service provider's boot() runs before the worker purges the connections it opened, and registers
+     * its handler on the connection the purge throws away: the replacement has to carry it.
+     */
+    public function test_a_duration_handler_registered_at_boot_survives_the_purge(): void
+    {
+        $app = $this->appWithConfig([
+            'async' => ['scoped_services' => [], 'db_pool' => ['enabled' => true]],
+            'database' => [
+                'default' => 'sqlite',
+                'connections' => [
+                    'sqlite' => ['driver' => 'sqlite', 'database' => 'file:boot?mode=memory&cache=shared'],
+                ],
+            ],
+        ]);
+        $app->instance('files', new \Illuminate\Filesystem\Filesystem());
+        $app->register(\Illuminate\Events\EventServiceProvider::class);
+        $app->register(\Illuminate\Database\DatabaseServiceProvider::class);
+        $app->register(\Spawn\Laravel\AsyncServiceProvider::class);
+        $app->boot();
+
+        $fired = [];
+        $booted = $app->make('db')->connection();
+        $booted->whenQueryingForLongerThan(10, function ($connection) use (&$fired) {
+            $fired[] = $connection;
+        });
+
+        // The pool step alone, then the switch: the rest of WorkerBootstrap::run() resolves services this
+        // application does not register.
+        (fn () => self::configureDatabasePool($app))->bindTo(null, WorkerBootstrap::class)();
+        $app->enableAsyncMode();
+
+        $live = $app->make('db')->connection();
+        $this->assertNotSame($booted, $live, 'the purge replaced the connection');
+
+        $this->inRequest(fn () => $live->logQuery('select 1', [], 20.0));
+        $this->inRequest(fn () => $live->logQuery('select 2', [], 20.0));
+        $booted->logQuery('select 3', [], 20.0);
+
+        $this->assertCount(2, $fired, 'once in each request, and the purged connection fires no more');
+        $this->assertSame($live, $fired[0]);
+    }
 }

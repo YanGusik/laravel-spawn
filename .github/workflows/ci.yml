@@ -20,6 +20,21 @@ jobs:
         # advisory, which composer still installs. The other job is whatever composer
         # resolves today, transitive dependencies included.
         laravel: ["13.40.0", "^13.0"]
+    # For the tests that need a real server behind the PDO pool (PooledLostConnectionTest);
+    # without SPAWN_TEST_MYSQL_DSN they skip.
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_DATABASE: spawn
+          MARIADB_USER: spawn
+          MARIADB_PASSWORD: spawn
+          MARIADB_RANDOM_ROOT_PASSWORD: "yes"
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
       - uses: actions/checkout@v4
 
@@ -30,7 +45,9 @@ jobs:
       # Image: https://github.com/true-async/releases
       - name: Run the test suite in the TrueAsync PHP image
         run: |
-          docker run --rm -v "$PWD":/app -w /app -e COMPOSER_ALLOW_SUPERUSER=1 \
+          docker run --rm --network host -v "$PWD":/app -w /app -e COMPOSER_ALLOW_SUPERUSER=1 \
+            -e SPAWN_TEST_MYSQL_DSN='mysql:host=127.0.0.1;port=3306;dbname=spawn' \
+            -e SPAWN_TEST_MYSQL_USER=spawn -e SPAWN_TEST_MYSQL_PASSWORD=spawn \
             trueasync/php-true-async:latest bash -euc '
               php -v
               php -m | grep -i async

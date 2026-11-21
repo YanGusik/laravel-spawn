@@ -158,7 +158,8 @@ final class WorkerBootstrap
      *
      * Runs before any connection is established, and purges the ones bootstrap opened:
      * a connection created before the options were set is not pooled, and it would go on
-     * being handed to coroutine after coroutine.
+     * being handed to coroutine after coroutine. The query duration handlers boot registered
+     * on a purged connection move to the one that replaces it.
      */
     private static function configureDatabasePool(Application $app): void
     {
@@ -169,6 +170,8 @@ final class WorkerBootstrap
             return;
         }
 
+        $poolOptions = PoolAttributes::forPool($pool);
+
         foreach ($config->get('database.connections', []) as $name => $connection) {
             // The options still go on: without the pool this connection would be one handle
             // for every coroutine. Named here, so its first query's refusal is not a surprise.
@@ -178,22 +181,57 @@ final class WorkerBootstrap
                     ."coroutines is 'file:<name>?mode=memory&cache=shared'");
             }
 
-            $config->set(
-                "database.connections.{$name}.options",
-                array_replace(
-                    $config->get("database.connections.{$name}.options", []),
-                    PoolAttributes::forPool($pool)
-                )
-            );
+            $config->set("database.connections.{$name}", self::withPoolOptions($connection, $poolOptions));
         }
 
-        if ($app->bound('db')) {
-            $db = $app->make('db');
+        if (! $app->bound('db')) {
+            return;
+        }
 
-            // By name: purge() without one reaches the default connection alone.
-            foreach (array_keys($db->getConnections()) as $name) {
-                $db->purge($name);
+        $db = $app->make('db');
+        $purged = $db->getConnections();
+
+        // By name: purge() without one reaches the default connection alone.
+        foreach (array_keys($purged) as $name) {
+            $db->purge($name);
+        }
+
+        foreach ($purged as $name => $connection) {
+            if (method_exists($connection, 'inheritQueryDurationHandlers') && $connection->hasQueryDurationHandlers()) {
+                $db->connection($name)->inheritQueryDurationHandlers($connection);
             }
         }
+    }
+
+    /**
+     * The connection's options with the pool's added, and those of each read, write and direct entry that
+     * names options of its own: Laravel merges such an entry over the connection with array_merge(), so its
+     * options replace the connection's. An entry is a map, or a list Laravel picks one of at random.
+     *
+     * @param  array<string, mixed>  $connection
+     * @param  array<int, mixed>  $poolOptions
+     * @return array<string, mixed>
+     */
+    private static function withPoolOptions(array $connection, array $poolOptions): array
+    {
+        $connection['options'] = array_replace($connection['options'] ?? [], $poolOptions);
+
+        foreach (['read', 'write', 'direct'] as $type) {
+            if (! is_array($connection[$type] ?? null)) {
+                continue;
+            }
+
+            $entries = isset($connection[$type][0]) ? $connection[$type] : [$connection[$type]];
+
+            foreach ($entries as $index => $entry) {
+                if (is_array($entry) && array_key_exists('options', $entry)) {
+                    $entries[$index]['options'] = array_replace((array) $entry['options'], $poolOptions);
+                }
+            }
+
+            $connection[$type] = isset($connection[$type][0]) ? $entries : $entries[0];
+        }
+
+        return $connection;
     }
 }
