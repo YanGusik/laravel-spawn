@@ -56,14 +56,7 @@ class AsyncRouter extends Router
              * own copy before anything can yield. */
             $route = clone $route;
 
-            RequestContext::current()->set(self::CTX_CURRENT_ROUTE, $route, replace: true);
-
-            /* As the stock router does, so that a second dispatch in the request also replaces
-             * the Route a type-hint receives: inside a request instance() keeps it there. */
-            if ($this->container instanceof \Spawn\Laravel\Foundation\AsyncApplication
-                && RequestContext::current() !== \Async\root_context()) {
-                $this->container->instance(\Illuminate\Routing\Route::class, $route);
-            }
+            $this->becomeCurrent($route);
         } else {
             $this->current = $route;
         }
@@ -77,6 +70,33 @@ class AsyncRouter extends Router
         }
 
         return $route;
+    }
+
+    /**
+     * Upstream's body, on this request's request and its own copy of the named route.
+     *
+     * Upstream reads the request from a property async mode leaves empty. An exception thrown
+     * before the router dispatched anything, by a global middleware, still has the request
+     * the container holds. The copy is bound because the collection keeps one Route per
+     * definition and binding writes the request's parameters onto it; it becomes the current
+     * route as in findRoute(), so the route a type-hint receives, Route::current() and the
+     * request's own route agree. A name with no route fails as upstream does.
+     */
+    public function respondWithRoute($name)
+    {
+        if (! $this->async) {
+            return parent::respondWithRoute($name);
+        }
+
+        $request = $this->getCurrentRequest() ?? $this->container->make('request');
+        $route = $this->routes->getByName($name);
+
+        if ($route !== null) {
+            $route = clone $route;
+            $this->becomeCurrent($route);
+        }
+
+        return $this->runRoute($request, $route->bind($request));
     }
 
     public function current()
@@ -95,5 +115,20 @@ class AsyncRouter extends Router
         }
 
         return $this->currentRequest;
+    }
+
+    /**
+     * Make this coroutine's copy of a route the request's current one.
+     */
+    private function becomeCurrent(\Illuminate\Routing\Route $route): void
+    {
+        RequestContext::current()->set(self::CTX_CURRENT_ROUTE, $route, replace: true);
+
+        /* As the stock router does, so that a second dispatch in the request also replaces
+         * the Route a type-hint receives: inside a request instance() keeps it there. */
+        if ($this->container instanceof \Spawn\Laravel\Foundation\AsyncApplication
+            && RequestContext::current() !== \Async\root_context()) {
+            $this->container->instance(\Illuminate\Routing\Route::class, $route);
+        }
     }
 }
