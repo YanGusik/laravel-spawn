@@ -280,12 +280,17 @@ class AsyncApplication extends Application
     {
         $alias = $this->getAlias($abstract);
 
-        if (! $this->asyncMode || $alias === 'request') {
+        if (! $this->asyncMode) {
             return parent::instance($abstract, $instance);
         }
 
-        $key = $this->perRequestKey($alias);
         $context = RequestContext::current();
+
+        if ($alias === 'request') {
+            return $this->replaceRequest($abstract, $instance, $context);
+        }
+
+        $key = $this->perRequestKey($alias);
 
         if ($context === root_context()) {
             $this->replacedInstances[$alias] = true;
@@ -313,6 +318,25 @@ class AsyncApplication extends Application
         return parent::instance($abstract, $instance);
     }
 
+    /**
+     * The kernel's instance('request', $request), kept in the request's context: written into the
+     * container it would answer a coroutine outside any request with this request, and keep it alive
+     * until the next one. The rebinding callbacks run as Laravel runs them, so the auth provider still
+     * sets the user resolver on the new request.
+     */
+    private function replaceRequest($abstract, $instance, \Async\Context $context): mixed
+    {
+        if ($context === root_context()) {
+            return parent::instance($abstract, $instance);
+        }
+
+        $context->set(ScopedService::REQUEST, $instance, replace: true);
+
+        $this->rebound('request');
+
+        return $instance;
+    }
+
     public function bound($abstract): bool
     {
         $alias = $this->getAlias($abstract);
@@ -322,6 +346,38 @@ class AsyncApplication extends Application
         }
 
         return parent::bound($abstract) || $this->requestHolds($alias);
+    }
+
+    /**
+     * Whether the service has been resolved: for a per-request service, in the current request. The
+     * container's own record is the worker's, where a per-request object never goes, and an object boot
+     * resolved stays in it for every request after.
+     */
+    public function resolved($abstract)
+    {
+        if (! $this->asyncMode) {
+            return parent::resolved($abstract);
+        }
+
+        $alias = $this->getAlias($abstract);
+
+        // perRequestKey() asks this question about 'config'.
+        if ($alias === 'config') {
+            return parent::resolved($abstract);
+        }
+
+        if ($alias === 'request') {
+            return RequestContext::current()->find(ScopedService::REQUEST) !== null || isset($this->instances['request']);
+        }
+
+        $key = $this->perRequestKey($alias);
+
+        if ($key === null) {
+            return parent::resolved($abstract);
+        }
+
+        return RequestContext::current()->find($key) !== null
+            || (isset($this->replacedInstances[$alias]) && isset($this->instances[$alias]));
     }
 
     /**
@@ -989,7 +1045,32 @@ class AsyncApplication extends Application
      */
     private function proxyFacade(string $alias): void
     {
-        FacadeCache::put($alias, new ScopedServiceProxy(fn () => $this->make($alias)));
+        $proxy = new ScopedServiceProxy(fn () => $this->make($alias));
+
+        foreach ($this->facadeKeysOf($alias) as $key) {
+            FacadeCache::put($key, $proxy);
+        }
+    }
+
+    /**
+     * The alias and every other name it is registered under, through aliases of aliases: a facade's
+     * accessor may be any of them.
+     *
+     * @return list<string>
+     */
+    private function facadeKeysOf(string $alias): array
+    {
+        $keys = [$alias];
+
+        for ($i = 0; $i < count($keys); $i++) {
+            foreach ($this->abstractAliases[$keys[$i]] ?? [] as $name) {
+                if (! in_array($name, $keys, true)) {
+                    $keys[] = $name;
+                }
+            }
+        }
+
+        return $keys;
     }
 
     /**
@@ -1047,8 +1128,12 @@ class AsyncApplication extends Application
         }
 
         foreach ($this->scopedAliases() as $alias) {
-            if (! FacadeCache::holdsProxy($alias)) {
-                $this->proxyFacade($alias);
+            foreach ($this->facadeKeysOf($alias) as $key) {
+                if (! FacadeCache::holdsProxy($key)) {
+                    $this->proxyFacade($alias);
+
+                    break;
+                }
             }
         }
     }
