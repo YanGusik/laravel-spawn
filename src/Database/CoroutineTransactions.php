@@ -2,7 +2,11 @@
 
 namespace Spawn\Laravel\Database;
 
+use Closure;
+use Illuminate\Database\LostConnectionException;
+use PDO;
 use Spawn\Laravel\Foundation\AsyncApplication;
+use Throwable;
 
 use function Async\coroutine_context;
 
@@ -31,9 +35,18 @@ use function Async\coroutine_context;
  * and level alone. AsyncDatabaseTransactionsManager keeps its records in the same
  * coroutine context as this counter, so a coroutine's afterCommit callbacks wait
  * for that coroutine's commit.
+ *
+ * A transaction stays on the PDO handle it began on. A sibling coroutine that loses its
+ * connection reconnects the connection for the whole worker, and on the new handle the
+ * transaction's next statement would autocommit and its rollBack() would do nothing: the
+ * coroutine keeps the handle in its own state until its level returns to 0.
+ *
+ * The rest of the state Laravel keeps on a connection per request is PerRequestConnectionState's.
  */
 trait CoroutineTransactions
 {
+    use PerRequestConnectionState;
+
     /**
      * Forced async mode — used in tests when no AsyncApplication is available.
      * In production, async mode is detected via AsyncApplication::isAsyncModeEnabled().
@@ -72,6 +85,7 @@ trait CoroutineTransactions
             // finished its transactions holds no reference to the connection.
             if ($level === 0) {
                 coroutine_context()->unset($this);
+                $this->releaseTransactionHandle();
             } else {
                 coroutine_context()->set($this, $level, replace: true);
             }
@@ -118,6 +132,8 @@ trait CoroutineTransactions
             $levelBeingCommitted = $this->transactionLevel();
 
             try {
+                $this->refuseLostTransaction();
+
                 if ($this->transactionLevel() == 1) {
                     $this->fireConnectionEvent('committing');
                     $this->getPdo()->commit();
@@ -160,20 +176,94 @@ trait CoroutineTransactions
     protected function createTransaction()
     {
         if ($this->transactionLevel() == 0) {
-            $this->reconnectIfMissingConnection();
-
-            try {
-                $this->executeBeginTransactionStatement();
-            } catch (\Throwable $e) {
-                $this->handleBeginTransactionException($e);
-            }
+            $this->beginOnPinnedHandle();
         } elseif ($this->transactionLevel() >= 1 && $this->queryGrammar->supportsSavepoints()) {
             $this->createSavepoint();
         }
     }
 
+    /**
+     * BEGIN on the handle the transaction will keep. Pinned before the statement: a sibling may
+     * reconnect while BEGIN waits for the server, and the transaction is on the handle BEGIN ran on.
+     */
+    private function beginOnPinnedHandle(): void
+    {
+        $this->reconnectIfMissingConnection();
+        $this->pinTransactionHandle();
+
+        try {
+            $this->executeBeginTransactionStatement();
+        } catch (Throwable $e) {
+            try {
+                $this->handleBeginTransactionException($e);
+            } catch (Throwable $e) {
+                $this->releaseTransactionHandle();
+
+                throw $e;
+            }
+        }
+    }
+
+    /**
+     * Laravel's, but the reconnected handle is pinned before BEGIN is retried: the reconnect went
+     * through setPdo(), which released the one pinned before.
+     */
+    protected function handleBeginTransactionException(Throwable $e)
+    {
+        if (! $this->causedByLostConnection($e)) {
+            throw $e;
+        }
+
+        $this->reconnect();
+        $this->pinTransactionHandle();
+
+        $this->executeBeginTransactionStatement();
+    }
+
+    private function pinTransactionHandle(): void
+    {
+        if (! $this->isAsyncMode()) {
+            return;
+        }
+
+        $state = $this->coroutineState();
+        $state->pinned = null;
+        $state->pinned = $this->getPdo();
+    }
+
+    private function releaseTransactionHandle(): void
+    {
+        $state = $this->coroutineState();
+        $state->pinned = null;
+        $state->lost = false;
+    }
+
+    /**
+     * @throws LostConnectionException When the server dropped this coroutine's transaction with its
+     *     connection. The message is one Laravel recognises as a lost connection, so the exception
+     *     unwinds the transaction level wherever Laravel checks for one.
+     */
+    private function refuseLostTransaction(): void
+    {
+        if ($this->isAsyncMode() && $this->coroutineState()->lost) {
+            throw new LostConnectionException(
+                'Lost connection inside a transaction: the server rolled it back. Roll the transaction '
+                .'back before running another statement on this connection.'
+            );
+        }
+    }
+
+    protected function run($query, $bindings, Closure $callback)
+    {
+        $this->refuseLostTransaction();
+
+        return parent::run($query, $bindings, $callback);
+    }
+
     protected function createSavepoint()
     {
+        $this->refuseLostTransaction();
+
         $this->getPdo()->exec(
             $this->queryGrammar->compileSavepoint('trans'.($this->transactionLevel() + 1))
         );
@@ -182,6 +272,8 @@ trait CoroutineTransactions
     /** The direct DB::commit() path; transaction() carries the same steps for its own. */
     public function commit()
     {
+        $this->refuseLostTransaction();
+
         if ($this->transactionLevel() == 1) {
             $this->fireConnectionEvent('committing');
             $this->getPdo()->commit();
@@ -207,10 +299,15 @@ trait CoroutineTransactions
             return;
         }
 
-        try {
-            $this->performRollBack($toLevel);
-        } catch (\Throwable $e) {
-            $this->handleRollBackException($e);
+        // Nothing is left to roll back on the server, and the savepoints went with the transaction.
+        if ($this->isAsyncMode() && $this->coroutineState()->lost) {
+            $toLevel = 0;
+        } else {
+            try {
+                $this->performRollBack($toLevel);
+            } catch (\Throwable $e) {
+                $this->handleRollBackException($e);
+            }
         }
 
         $this->setTransactionLevel($toLevel);
@@ -286,8 +383,8 @@ trait CoroutineTransactions
      * replaces it — a fresh handle carries no transaction. disconnect() reaches this
      * through setPdo(null).
      *
-     * Other coroutines mid-transaction on the old handle keep their counters and wake up
-     * at level 1 with a link that never saw their BEGIN. That needs the pool, not a counter.
+     * Other coroutines mid-transaction on the old handle keep their counters, and getPdo()
+     * keeps handing them the old handle until their transactions end.
      *
      * @param  \PDO|\Closure|null  $pdo
      * @return $this
@@ -307,11 +404,83 @@ trait CoroutineTransactions
      */
     public function getReadPdo()
     {
-        if ($this->transactionLevel() > 0) {
+        if (! $this->isAsyncMode()) {
+            return parent::getReadPdo();
+        }
+
+        if ($this->transactionLevel() > 0 || $this->readsFromWritePdo()) {
             return $this->getPdo();
         }
 
-        return parent::getReadPdo();
+        $this->coroutineState()->latestPdoType = 'read';
+
+        return $this->resolveHandle('readPdo') ?: $this->getPdo();
+    }
+
+    /**
+     * The write PDO connection: inside a transaction, the handle the transaction began on.
+     *
+     * @return \PDO
+     */
+    public function getPdo()
+    {
+        if (! $this->isAsyncMode()) {
+            return parent::getPdo();
+        }
+
+        $state = $this->coroutineState();
+        $state->latestPdoType = 'write';
+
+        return $state->pinned ?? $this->resolveHandle('pdo');
+    }
+
+    /** @return \PDO */
+    public function getDirectPdo()
+    {
+        if (! $this->isAsyncMode()) {
+            return parent::getDirectPdo();
+        }
+
+        $this->coroutineState()->latestPdoType = 'direct';
+
+        return $this->resolveHandle('directPdo') ?: $this->getPdo();
+    }
+
+    protected function latestReadWriteTypeUsed()
+    {
+        if (! $this->isAsyncMode()) {
+            return parent::latestReadWriteTypeUsed();
+        }
+
+        return $this->readWriteType ?? $this->coroutineState()->latestPdoType;
+    }
+
+    /**
+     * The handle in one of the PDO properties, resolving a lazy one.
+     *
+     * Connecting suspends the coroutine, so two coroutines meeting the same closure both resolve it.
+     * The first to finish stores its handle and the second adopts that one: a transaction may already
+     * be open on it. A property replaced by something other than a handle meanwhile (a reconnect, a
+     * disconnect) is left alone, and the handle just made serves this call only.
+     *
+     * @param  'pdo'|'readPdo'|'directPdo'  $property
+     */
+    private function resolveHandle(string $property): ?PDO
+    {
+        $handle = $this->{$property};
+
+        if (! $handle instanceof Closure) {
+            return $handle;
+        }
+
+        $resolved = $handle();
+        $current = $this->{$property};
+
+        if ($current === $handle) {
+            return $this->{$property} = $resolved;
+        }
+
+        return $current instanceof PDO ? $current : $resolved;
     }
 
     /**
@@ -332,6 +501,10 @@ trait CoroutineTransactions
         \Closure $callback
     ) {
         if ($this->transactionLevel() > 0) {
+            if ($this->isAsyncMode() && $this->causedByLostConnection($e->getPrevious())) {
+                $this->coroutineState()->lost = true;
+            }
+
             throw $e;
         }
 
