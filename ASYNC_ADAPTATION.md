@@ -23,9 +23,9 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **Session** | `ScopedService::SESSION` + `ScopedService::SESSION_STORE` + `ScopedServiceProxy` | Session data, including the store the session guard authenticates from |
 | **Cookie** | `ScopedService::COOKIE` | Queued cookies |
 | **View / Blade** | [`AsyncViewFactory`](src/View/AsyncViewFactory.php) — one factory, per-request render state | `View::share()` data and the whole render state: `@section`, `@push`, components, slots, fragments, loops, `@once` |
-| **Routing** | [`AsyncRouter`](src/Routing/AsyncRouter.php) | Current route and request |
+| **Routing** | [`AsyncRouter`](src/Routing/AsyncRouter.php) | Current route and request; `respondWithRoute()` runs a copy of the named route for the request being served |
 | **Database** | [`CoroutineTransactions`](src/Database/CoroutineTransactions.php) | Transaction depth counter |
-| **Translation** | [`AsyncTranslator`](src/Translation/AsyncTranslator.php) | Active locale (shared `$loaded` cache) |
+| **Translation** | [`AsyncTranslator`](src/Translation/AsyncTranslator.php) | Active locale and fallback (shared `$loaded` cache); the switch that turns `handleMissingKeysUsing()` off inside `has()` and the callback, per coroutine |
 | **Config** | [`AsyncConfig`](src/Config/AsyncConfig.php) | `config()->set()` overlay per coroutine |
 | **Events** | [`AsyncDispatcher`](src/Events/AsyncDispatcher.php) | `defer()` state (deferring flag, deferred queue) |
 | **Facades** | [`ScopedServiceProxy`](src/Foundation/ScopedServiceProxy.php) in the facade cache | Every per-request alias, including the ones a proxy cannot be returned for (`redirect`, `cookie`) |
