@@ -50,7 +50,6 @@ class RedisRawWindowTest extends AsyncTestCase
         $this->manager = new RedisManager(new Container(), 'phpredis', [
             'options' => ['prefix' => 'spawn_raw_window_', 'serializer' => \Redis::SERIALIZER_PHP],
             'default' => ['host' => '127.0.0.1', 'port' => 6379, 'database' => 13],
-            'plain' => ['host' => '127.0.0.1', 'port' => 6379, 'database' => 13, 'serializer' => \Redis::SERIALIZER_NONE],
         ]);
         $this->manager->extend('phpredis', fn () => new AsyncPhpRedisConnector([
             'enabled' => true, 'min' => 0, 'max' => 8, 'mux' => 0,
@@ -118,8 +117,15 @@ class RedisRawWindowTest extends AsyncTestCase
 
     public function test_a_connection_without_a_serializer_runs_the_callback_as_it_is(): void
     {
+        $plain = new RedisManager(new Container(), 'phpredis', [
+            'default' => ['host' => '127.0.0.1', 'port' => 6379, 'database' => 13],
+        ]);
+        $plain->extend('phpredis', fn () => new AsyncPhpRedisConnector([
+            'enabled' => true, 'min' => 0, 'max' => 2, 'mux' => 0,
+        ]));
+
         /** @var PhpRedisConnection $connection */
-        $connection = $this->manager->connection('plain');
+        $connection = $plain->connection();
         $client = $connection->client();
 
         $inside = $connection->withoutSerializationOrCompression(fn () => $connection->client());
@@ -167,7 +173,8 @@ class RedisRawWindowTest extends AsyncTestCase
 
         for ($i = 0; $i < 10; $i++) {
             $this->assertSame([], $results["reader$i"], 'a cached array must read back as the array');
-            $this->assertSame(1, $results["limiter$i"], 'a limiter counter must count');
+            // RedisStore reads a raw counter back as the numeric string it is.
+            $this->assertSame('1', $results["limiter$i"], 'a limiter counter must count');
         }
     }
 

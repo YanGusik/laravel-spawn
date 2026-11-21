@@ -229,6 +229,20 @@ class RedisPoolTest extends AsyncTestCase
         $this->assertTrue((bool) $manager->connection()->ping());
     }
 
+    /**
+     * AsyncPhpRedisConnection routes `$client` through a property hook of its own. The day
+     * Laravel declares hooks or a type on that property, the subclass stops compiling or stops
+     * routing; this is where that is found.
+     */
+    public function test_laravel_leaves_the_client_property_plain(): void
+    {
+        $property = new \ReflectionProperty(\Illuminate\Redis\Connections\PhpRedisConnection::class, 'client');
+
+        $this->assertFalse($property->hasHooks());
+        $this->assertFalse($property->hasType());
+        $this->assertTrue((new \ReflectionProperty(\Spawn\Laravel\Redis\AsyncPhpRedisConnection::class, 'client'))->hasHooks());
+    }
+
     private function serverIsUp(): bool
     {
         $probe = new \Redis();

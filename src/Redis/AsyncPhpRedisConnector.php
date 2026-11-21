@@ -20,6 +20,35 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
     }
 
     /**
+     * Stock connection outside pool mode; in pool mode one that keeps the rate limiter's
+     * switch to raw values in the coroutine that asked for it ({@see AsyncPhpRedisConnection}).
+     *
+     * @param  array  $config
+     * @param  array  $options
+     * @return \Illuminate\Redis\Connections\PhpRedisConnection
+     */
+    public function connect(array $config, array $options)
+    {
+        if (! $this->isPoolable()) {
+            return parent::connect($config, $options);
+        }
+
+        $formattedOptions = Arr::pull($config, 'options', []);
+
+        if (isset($config['prefix'])) {
+            $formattedOptions['prefix'] = $config['prefix'];
+        }
+
+        // The same merge as the stock connector, so that the raw client carries the prefix and
+        // every other option `redis.options` sets for all connections.
+        $merged = array_merge($config, $options, $formattedOptions);
+        $connector = fn () => $this->createClient($merged);
+        $rawConnector = fn () => $this->createRawClient($merged);
+
+        return new AsyncPhpRedisConnection($connector(), $connector, $config, $rawConnector);
+    }
+
+    /**
      * Create the Redis client instance.
      *
      * @param  array  $config
@@ -34,6 +63,26 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
         $client = new Redis($this->constructorOptions($config));
 
         $this->applyTemplateOptions($client, $config);
+
+        return $client;
+    }
+
+    /**
+     * A pooled client that sends and reads values as they are: the configuration's own, with the
+     * serializer and compression off, no multiplexed lanes and no warm sockets.
+     */
+    protected function createRawClient(array $config): Redis
+    {
+        $options = $this->constructorOptions($config);
+        $options['pool']['min'] = 0;
+        $options['pool']['mux'] = 0;
+
+        $client = new Redis($options);
+
+        $this->applyTemplateOptions($client, array_merge($config, [
+            'serializer' => Redis::SERIALIZER_NONE,
+            'compression' => Redis::COMPRESSION_NONE,
+        ]));
 
         return $client;
     }
