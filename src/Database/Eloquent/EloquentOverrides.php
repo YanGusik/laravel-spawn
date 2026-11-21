@@ -5,14 +5,15 @@ namespace Spawn\Laravel\Database\Eloquent;
 use Composer\Autoload\ClassLoader;
 
 /**
- * Puts this package's copies of four Eloquent classes in front of Laravel's own.
+ * Puts this package's copies of seven Eloquent classes in front of Laravel's own.
  *
  * Each copy exists for the same reason: Eloquent keeps a decision of the moment in a class
  * static, sets it, runs a callback and restores it. A class static is one value per worker
  * thread, so a callback that suspends hands that decision to every coroutine served in the
  * meantime. The copies keep the value in the coroutine's own context instead — see
- * {@see RelationWindow}, {@see GuardWindow} and {@see EventDispatcherWindow} for what each one
- * holds, and the group comments below for what breaks without it.
+ * {@see RelationWindow}, {@see GuardWindow}, {@see EventDispatcherWindow},
+ * {@see IgnoredClassesWindow}, {@see BroadcastWindow} and {@see MissingAttributeWindow} for what
+ * each one holds, and the group comments below for what breaks without it.
  *
  * The copies are ordinary files under `overrides/laravel-13/<release>/`, edited by hand and
  * reviewable in a diff; `bin/refresh-eloquent-overrides.php` re-applies every edit to the files
@@ -48,6 +49,14 @@ final class EloquentOverrides
      * that window. Left with Laravel's relation classes, a `Relation` that leaves the flag
      * alone would have eager loading add a `where` on a key that is not there yet; left with
      * Laravel's `Relation`, the window would never open.
+     *
+     * `the model windows` needs both its files for the broadcast window: `Model` opens it in
+     * withoutBroadcasting() and `BroadcastsEvents` reads it. Left with Laravel's
+     * `BroadcastsEvents`, a `Model` that leaves the static alone would stop silencing broadcasts
+     * at all. Touching and the isset() strict-mode switch live in `Model` alone and go with it.
+     * `the timestamps window` is a group of its own because `Model.php` changes in about every
+     * second Laravel release and `HasTimestamps` almost never: a new release that refuses the
+     * model windows must not take the timestamps fix down with it.
      */
     private const GROUPS = [
         'relation constraints' => [
@@ -87,6 +96,29 @@ final class EloquentOverrides
             'Illuminate\\Database\\Eloquent\\Concerns\\HasEvents' => [
                 'Concerns/HasEvents.php',
                 ['e86185a511f4e5099315df5cc3959679502d7c9a71157cedf31a302fefc313cf' => '13.26.1'],
+            ],
+        ],
+        'the timestamps window' => [
+            'Illuminate\\Database\\Eloquent\\Concerns\\HasTimestamps' => [
+                'Concerns/HasTimestamps.php',
+                // Laravel 13.26.0 and later.
+                ['25ec1bf4a0be4595f82064e534fd42fdaa62013ef6ce5a79d5a136304f44aa7a' => '13.40.0'],
+            ],
+        ],
+        'the model windows' => [
+            'Illuminate\\Database\\Eloquent\\Model' => [
+                'Model.php',
+                [
+                    // Laravel 13.39.0 to 13.42.x.
+                    'c84c3458477caabc8b86a441de97c35e74fe1542246a5017c252b93873424ea9' => '13.40.0',
+                    // Laravel 13.43.0 and later, which caches more of the model's reflection.
+                    '6cc643f12225f160a2005735cb33a33ac248d6834cd396ae99cfd4d1e2b2d4b2' => '13.43.0',
+                ],
+            ],
+            'Illuminate\\Database\\Eloquent\\BroadcastsEvents' => [
+                'BroadcastsEvents.php',
+                // Laravel 13.26.0 and later.
+                ['a46f4a4c1a8d14d11a38a6bf292899b34e749ececda62485d9f670b67f3cf399' => '13.40.0'],
             ],
         ],
     ];
