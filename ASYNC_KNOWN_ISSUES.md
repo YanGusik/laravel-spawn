@@ -192,14 +192,18 @@ visibly; where none is named, nothing will notice the change but a reader.
    at start-up, with `file:<name>?mode=memory&cache=shared` as the form the pool takes. Persistent connections are not supported under
    async serving in the first place: one connection shared across coroutines is the
    defect the pool exists to prevent.
-12. **Four Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/<release>/` holds
-   `Relations\Relation`, `Concerns\HasRelationships`, `Concerns\GuardsAttributes` and
-   `Concerns\HasEvents`, and `EloquentOverrides` puts them in front of Laravel's through
-   Composer's class map. They form three groups, installed independently of each other: the
-   two relation files, which need each other — a `Relation` that no longer switches the flag
-   off, next to Laravel's own relation classes, would have eager loading add a `where` on a key
-   that is not there yet — and then the mass-assignment window and the model-event dispatcher,
-   one file each. A release that moves one group leaves the other two installed.
+12. **Seven Eloquent files are copies, and copies fall behind.** `overrides/laravel-13/<release>/` holds
+   `Relations\Relation`, `Concerns\HasRelationships`, `Concerns\GuardsAttributes`,
+   `Concerns\HasEvents`, `Concerns\HasTimestamps`, `Model` and `BroadcastsEvents`, and
+   `EloquentOverrides` puts them in front of Laravel's through Composer's class map. They form
+   five groups, installed independently of each other: the two relation files, which need each
+   other — a `Relation` that no longer switches the flag off, next to Laravel's own relation
+   classes, would have eager loading add a `where` on a key that is not there yet — then the
+   mass-assignment window, the model-event dispatcher and the timestamps window, one file each,
+   and the model windows (touching, broadcasting, the strict-mode switch of `isset()`), `Model`
+   with `BroadcastsEvents`, which reads the broadcast window `Model` opens. A release that moves
+   one group leaves the others installed. `Model.php` changes in about every second Laravel
+   release, so the model windows are the group a new release refuses most often.
    Each copy carries the checksum of the file it was taken from. A Laravel release that touches
    one leaves the application on Laravel's class for that group — with the defect — rather than
    on a copy that has quietly fallen behind; `src/bootstrap.php` raises an `E_USER_WARNING`
@@ -210,24 +214,31 @@ visibly; where none is named, nothing will notice the change but a reader.
    keeps one copy per upstream variant, and the copy installed is the one taken from the file
    the application has: a copy is never put over a variant it was not taken from, because the
    variant can carry a method the copy would take away (`Relation::clone()`, 13.38.0). The
-   variants copied cover every Laravel 13 from 13.26.1 to 13.42.0, and `composer.json` requires
-   `^13.30.0`, the oldest 13 without a published security advisory: a newer 13 installs, and one that moves a copied file is reported at start-up
-   rather than refused by composer. The churn is real rather than
+   variants copied cover every Laravel 13 from 13.40.0, the floor `composer.json` requires
+   (`^13.40.0`, below which composer refuses every 13 for a security advisory), to 13.43.0: a
+   newer 13 installs, and one that moves a copied file is reported at start-up rather than
+   refused by composer. The churn is real rather than
    theoretical: `Relation` gained `withConstraints()` and a second flag between 13.2.0 and
    13.26.1, and the CI of this branch went red on exactly that. CI runs the suite against the
    newest Laravel 13 on every push, and the `Laravel drift` workflow does the same every night,
    so a release that moves past the copies is found there first.
-   Three things the copies do not reach. A coroutine spawned **inside** a window does not inherit
+   Four things the copies do not reach. A coroutine spawned **inside** a window does not inherit
    it — the window lives in the opener's own context — so a relation built there is constrained
-   where the opener wanted it bare, a model filled there is filled guarded, and a model event
-   fired there is delivered where the opener asked for silence. A package shipping its own
+   where the opener wanted it bare, a model filled there is filled guarded, a model event
+   fired there is delivered where the opener asked for silence, and a parallel import inside
+   `withoutTimestamps()`, `withoutTouching()` or `withoutBroadcasting()` stamps its rows, touches
+   their parents and broadcasts from every child. A package shipping its own
    `Relation` subclass with its own `addConstraints()` reads the shared property, which is now
-   permanently true, and adds constraints during an eager load. And `opcache.preload` declaring
-   any of the four classes before Composer includes `src/bootstrap.php` leaves the application
-   on Laravel's own.
-   `tests/EloquentOverridesTest.php` and `tests/EloquentStaticsIsolationTest.php` pin the
-   behaviour; six cases of the first and five of the second fail with
-   `SPAWN_ELOQUENT_OVERRIDES=0`. Nothing pins the independence of the groups themselves: it
+   permanently true, and adds constraints during an eager load. A model that reads one of the
+   protected statics itself — `static::$isBroadcasting`, `static::$ignoreOnTouch`,
+   `static::$modelsShouldPreventAccessingMissingAttributes` in an override of the method that
+   reads it — does not see the window; one that writes it still reaches every coroutine. And
+   `opcache.preload` declaring any of the seven classes before Composer includes
+   `src/bootstrap.php` leaves the application on Laravel's own; `Model` is the one a preload
+   list is most likely to name.
+   `tests/EloquentOverridesTest.php`, `tests/EloquentStaticsIsolationTest.php` and
+   `tests/EloquentModelWindowsTest.php` pin the behaviour; six cases of the first, five of the
+   second and nine of the third fail with `SPAWN_ELOQUENT_OVERRIDES=0`. Nothing pins the independence of the groups themselves: it
    would take a Laravel file that has moved, which no fixture can stand in for, so the group a
    release breaks is found by the drift job rather than by a test here.
 

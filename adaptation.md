@@ -192,10 +192,16 @@
 `$primitiveCastTypes`, `$collectionClass`, `$manyMethods`, `$relationResolvers`,
 `$resolvedCollectionClasses`, `$modelsShouldPreventLazyLoading`,
 `$modelsShouldAutomaticallyEagerLoadRelationships`, `$modelsShouldPreventSilentlyDiscardingAttributes`,
-`$modelsShouldPreventAccessingMissingAttributes`, `$lazyLoadingViolationCallback`,
+`$lazyLoadingViolationCallback`,
 `$discardedAttributeViolationCallback`, `$missingAttributeViolationCallback`,
-`$isBroadcasting`, `$builder`, `$isSoftDeletable`, `$isPrunable`, `$isMassPrunable`,
-`$ignoreOnTouch`, `$ignoreTimestampsOn`, `$encrypter`, `$guardableColumns`.
+`$builder`, `$isSoftDeletable`, `$isPrunable`, `$isMassPrunable`, `$encrypter`, `$guardableColumns`.
+
+**Не безопасны, исправлены копиями (#85, Issue 2):** `$modelsShouldPreventAccessingMissingAttributes`
+(`offsetExists()` пишет её на время `isset()`), `$isBroadcasting` (`withoutBroadcasting()`),
+`$ignoreOnTouch` (`withoutTouching()`), `$ignoreTimestampsOn` (`withoutTimestamps()`). Каждый из
+этих методов меняет статику на время колбэка, и колбэк, который приостанавливается, отдаёт это
+решение всем корутинам воркера. Копии `Model`, `BroadcastsEvents` и `Concerns\HasTimestamps`
+держат его в контексте корутины.
 
 **`Model::$unguarded`** — `Model::unguard()` используется только в seeders (CLI), не в HTTP-запросах. Безопасен.
 
