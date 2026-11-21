@@ -56,8 +56,10 @@ final class EloquentOverrides
                 [
                     // Laravel 13.26.1 to 13.37.x.
                     '30e8d8a056ed866be1ee586003094f9c233e2e1a8d42d732c366ba8f01982cc7' => '13.26.1',
-                    // Laravel 13.38.0 and later, which adds Relation::clone().
+                    // Laravel 13.38.0 to 13.42.x, which adds Relation::clone().
                     '0b785232312e99af673281299ad42d9024f1919d8e25266864188a51645d48e4' => '13.42.0',
+                    // Laravel 13.43.0 and later, which adds Relation::withCasts().
+                    'b62f8298a90775f6f981260d53f8dbfdf5a8d51a1d4905e597cbdf5d8df5cd39' => '13.43.0',
                 ],
             ],
             'Illuminate\\Database\\Eloquent\\Concerns\\HasRelationships' => [
@@ -73,7 +75,12 @@ final class EloquentOverrides
         'the mass-assignment window' => [
             'Illuminate\\Database\\Eloquent\\Concerns\\GuardsAttributes' => [
                 'Concerns/GuardsAttributes.php',
-                ['2e1b77306a0fbc050e1ae3c78d2b5b53d3033c347b4d0a9a2ada5160e1fb6d61' => '13.26.1'],
+                [
+                    // Laravel 13.26.1 to 13.42.x.
+                    '2e1b77306a0fbc050e1ae3c78d2b5b53d3033c347b4d0a9a2ada5160e1fb6d61' => '13.26.1',
+                    // Laravel 13.43.0 and later: isGuarded() also matches the studly form of a key.
+                    'a2f7388bccf7f18032a06878e7cb3d1acce65e2e3d5f57e824e1a6099e0b55a5' => '13.43.0',
+                ],
             ],
         ],
         'the model-event dispatcher' => [
