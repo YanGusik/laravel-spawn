@@ -56,7 +56,10 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
     {
         $options = [
             'host' => $this->formatHost($config),
-            'port' => (int) ($config['port'] ?? 6379),
+            // phpredis takes a host starting with `/` for a unix socket only with a port below 1,
+            // and opens 6379 itself for a TCP host with port 0: what the stock connector's
+            // missing port amounts to.
+            'port' => (int) ($config['port'] ?? 0),
             'pool' => [
                 'enabled' => true,
                 'min'     => (int) ($this->pool['min'] ?? 0),
@@ -87,8 +90,10 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
                 : $config['password'];
         }
 
+        // The constructor takes the TLS options flat, as RedisCluster does, where Laravel's
+        // documented form wraps them in `stream` or `ssl`.
         if (! is_null($context = Arr::get($config, 'context'))) {
-            $options['ssl'] = $context;
+            $options['ssl'] = $this->normalizeClusterContext($context);
         }
 
         return $options;
