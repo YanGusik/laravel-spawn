@@ -180,6 +180,22 @@ class RedisPoolTest extends AsyncTestCase
     }
 
     /**
+     * The pool's multiplexed lanes read their sockets with plain recv(), past the stream's TLS
+     * layer, so a TLS connection with lanes reads ciphertext. TLS runs without them.
+     */
+    public function test_tls_runs_without_multiplexed_lanes(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true, 'max' => 8, 'mux' => 2]);
+        $mux = fn (array $config) => (fn (array $config) => $this->constructorOptions($config))
+            ->call($connector, $config)['pool']['mux'];
+
+        $this->assertSame(0, $mux(['host' => 'redis.internal', 'context' => ['stream' => ['verify_peer' => false]]]));
+        $this->assertSame(0, $mux(['host' => 'tls://redis.internal']));
+        $this->assertSame(0, $mux(['host' => 'redis.internal', 'scheme' => 'tls']));
+        $this->assertSame(2, $mux(['host' => 'redis.internal']));
+    }
+
+    /**
      * phpredis takes a host starting with `/` for a unix socket only when the port is below 1,
      * and opens 6379 itself for a TCP host with port 0 — which is what the stock connector's
      * missing port amounts to.
