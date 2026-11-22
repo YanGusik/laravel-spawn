@@ -18,6 +18,7 @@ final class SentryRequest
     {
         if (class_exists(SentrySdk::class) && method_exists(SentrySdk::class, 'startContext')) {
             RequestRuntimeContextStorage::forgetReleased();
+            PerRequestListeners::forget();
             SentrySdk::startContext();
         }
     }

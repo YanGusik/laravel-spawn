@@ -93,6 +93,13 @@ class AsyncServiceProvider extends ServiceProvider
         // sentry-laravel hands its own hub to SentrySdk inside the factory, before this runs.
         $this->app->extend(\Sentry\State\HubInterface::class, static fn () => \Sentry\State\HubAdapter::getInstance());
 
+        // sentry-laravel subscribes its listeners in boot(), so they are all there once the app has booted.
+        $this->app->booted(static function ($app): void {
+            if ($app['events'] instanceof \Illuminate\Events\Dispatcher) {
+                \Spawn\Laravel\Sentry\PerRequestListeners::wrap($app['events']);
+            }
+        });
+
         if (class_exists(\Sentry\Laravel\Tracing\Middleware::class)) {
             // The transaction and spans of the request it started.
             $this->app->scopedSingleton(

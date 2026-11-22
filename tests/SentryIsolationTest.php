@@ -28,19 +28,37 @@ class SentryIsolationTest extends AsyncTestCase
         }
     }
 
-    /** @param  array<string, mixed>  $sentry */
-    private function worker(array $sentry = []): \Spawn\Laravel\Foundation\AsyncApplication
+    /**
+     * A worker booted with sentry-laravel, its providers registered before boot as an application's are.
+     *
+     * @param  array<string, mixed>  $sentry
+     */
+    private function worker(array $sentry = [], bool $tracing = false): \Spawn\Laravel\Foundation\AsyncApplication
     {
-        $app = $this->bootedApp([]);
-        $app->instance('env', 'testing');
-        $app['config']->set('sentry', $sentry + ['dsn' => null, 'tracing' => []]);
-        $app->register(\Sentry\Laravel\ServiceProvider::class);
+        $providers = [\Sentry\Laravel\ServiceProvider::class];
+
+        if ($tracing) {
+            $providers[] = \Sentry\Laravel\Tracing\ServiceProvider::class;
+        }
+
+        $app = $this->bootedApp($providers, ['sentry' => $sentry + ['dsn' => null, 'tracing' => []]]);
         $app->make(HubInterface::class);
         // LogManager builds a channel once and keeps it: the logger holds the hub it was given at boot.
         $app->instance('test.sentry-logger', (new \Sentry\Laravel\LogChannel($app))([]));
         $app->enableAsyncMode();
 
         return $app;
+    }
+
+    /** A worker whose tracing listeners are subscribed and whose events go nowhere. */
+    private function tracingWorker(): \Spawn\Laravel\Foundation\AsyncApplication
+    {
+        return $this->worker([
+            'dsn' => 'https://key@sentry.invalid/1',
+            'traces_sample_rate' => 1.0,
+            'before_send' => static fn () => null,
+            'before_send_transaction' => static fn () => null,
+        ], tracing: true);
     }
 
     private static function user(HubInterface $hub): ?string
@@ -155,7 +173,8 @@ class SentryIsolationTest extends AsyncTestCase
 
         $results = $this->inRequest(static function () use ($app): array {
             $first = self::served(function () use ($app) {
-                $app->make(HubInterface::class)->configureScope(fn (Scope $scope) => $scope->setUser(['id' => 'first']));
+                $app->make(HubInterface::class)
+                    ->configureScope(fn (Scope $scope) => $scope->setUser(['id' => 'first']));
 
                 return \Sentry\SentrySdk::getCurrentRuntimeContext();
             })();
@@ -202,8 +221,7 @@ class SentryIsolationTest extends AsyncTestCase
 
     public function test_a_transaction_the_middleware_started_in_one_request_is_not_another_requests(): void
     {
-        $app = $this->worker(['traces_sample_rate' => 1.0]);
-        $app->register(\Sentry\Laravel\Tracing\ServiceProvider::class);
+        $app = $this->worker(['traces_sample_rate' => 1.0], tracing: true);
 
         $transactionOf = static fn (object $middleware) => (fn () => $this->transaction)->call($middleware);
 
@@ -230,10 +248,103 @@ class SentryIsolationTest extends AsyncTestCase
         $this->assertSame([null, null], $results['b']);
     }
 
+    /**
+     * @return array<string, array{\Closure(): array{object, object}}>
+     */
+    public static function spans(): array
+    {
+        return [
+            'a database transaction' => [static function (): array {
+                $connection = new \Illuminate\Database\SQLiteConnection(new \PDO('sqlite::memory:'));
+
+                return [
+                    new \Illuminate\Database\Events\TransactionBeginning($connection),
+                    new \Illuminate\Database\Events\TransactionCommitted($connection),
+                ];
+            }],
+            'an HTTP client call' => [static function (): array {
+                $request = new \Illuminate\Http\Client\Request(
+                    new \GuzzleHttp\Psr7\Request('GET', 'https://api.test/x'),
+                );
+
+                return [
+                    new \Illuminate\Http\Client\Events\RequestSending($request),
+                    new \Illuminate\Http\Client\Events\ResponseReceived(
+                        $request,
+                        new \Illuminate\Http\Client\Response(new \GuzzleHttp\Psr7\Response(200)),
+                    ),
+                ];
+            }],
+        ];
+    }
+
+    /**
+     * sentry-laravel's listeners are one per worker and keep the spans they open on a stack until
+     * the closing event: with I/O between the two, one request's close popped another's span.
+     */
+    #[\PHPUnit\Framework\Attributes\DataProvider('spans')]
+    public function test_a_span_a_listener_opened_is_closed_in_its_own_request(\Closure $events): void
+    {
+        $app = $this->tracingWorker();
+
+        $request = static fn (string $path, int $beforeOpen, int $beforeClose) => self::served(
+            static fn () => self::traced($app, $events, $path, $beforeOpen, $beforeClose),
+        );
+
+        $results = $this->runParallel([
+            'a' => $request('/a', 0, 40),
+            'b' => $request('/b', 10, 60),
+        ]);
+
+        $this->assertSame([true, true, true], $results['a'], 'its close finished its own span and put its own back');
+        $this->assertSame([true, true, true], $results['b']);
+    }
+
+    /**
+     * Opens a transaction, then the listener's span between two events, with delays around the open.
+     *
+     * @return array{bool, bool, bool} the span is the transaction's child, it was finished, and the
+     *     transaction is the current span again
+     */
+    private static function traced(
+        object $app,
+        \Closure $events,
+        string $path,
+        int $beforeOpen,
+        int $beforeClose,
+    ): array {
+        [$open, $close] = $events();
+        $hub = $app->make(HubInterface::class);
+        $transaction = $hub->startTransaction(\Sentry\Tracing\TransactionContext::make()->setName($path));
+        $hub->setSpan($transaction);
+
+        delay($beforeOpen);
+        $app['events']->dispatch($open);
+        $inside = $hub->getSpan();
+        delay($beforeClose);
+        $app['events']->dispatch($close);
+
+        return [
+            $inside !== $transaction && $inside->getTransaction() === $transaction,
+            $inside->getEndTimestamp() !== null,
+            $hub->getSpan() === $transaction,
+        ];
+    }
+
+    /** A queue job or an artisan command: no request, the worker's own listener. */
+    #[\PHPUnit\Framework\Attributes\DataProvider('spans')]
+    public function test_outside_any_request_the_listener_of_the_worker_traces(\Closure $events): void
+    {
+        $app = $this->tracingWorker();
+
+        $traced = $this->inRequest(static fn () => self::traced($app, $events, '/job', 0, 5));
+
+        $this->assertSame([true, true, true], $traced);
+    }
+
     public function test_each_request_has_its_own_tracing_middleware_and_transaction_finisher(): void
     {
-        $app = $this->worker();
-        $app->register(\Sentry\Laravel\Tracing\ServiceProvider::class);
+        $app = $this->worker(tracing: true);
 
         $objects = static fn () => [
             $app->make(\Sentry\Laravel\Tracing\Middleware::class),

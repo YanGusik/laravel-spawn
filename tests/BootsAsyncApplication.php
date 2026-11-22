@@ -18,13 +18,18 @@ trait BootsAsyncApplication
 {
     /**
      * @param  string[]  $providers  application providers, registered after the package's own
+     * @param  array<string, mixed>  $config  more configuration, in place when the providers register
      */
-    private function bootedApp(array $providers = [BotTokenAuthServiceProvider::class]): AsyncApplication
-    {
+    private function bootedApp(
+        array $providers = [BotTokenAuthServiceProvider::class],
+        array $config = [],
+    ): AsyncApplication {
         $app = new AsyncApplication(sys_get_temp_dir());
 
         $app->instance('files', new Filesystem());
-        $app->instance('config', new Repository([
+        // Bound in every application before its providers register; sentry-laravel reads it at boot.
+        $app->instance('env', 'testing');
+        $app->instance('config', new Repository($config + [
             'async'   => ['scoped_services' => [], 'db_pool' => ['enabled' => false]],
             'session' => ['driver' => 'stub'],
             'auth'    => [
