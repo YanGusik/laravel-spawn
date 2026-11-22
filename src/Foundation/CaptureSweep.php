@@ -67,6 +67,9 @@ final class CaptureSweep
         $scope    = Scope::inherit();
 
         $scope->spawn(function () use ($url, &$captures): void {
+            // As DevServer marks its request: the audit has no server to give it a request scope.
+            RequestContext::begin();
+
             $request = Request::create($url, 'GET');
 
             RequestContext::current()->set(ScopedService::REQUEST, $request);

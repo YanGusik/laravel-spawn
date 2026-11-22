@@ -34,6 +34,13 @@ final class WorkerBootstrap
 
     private static function configure(Application $app): void
     {
+        /* A deferred provider loaded by the first request that asks for its service would
+         * register and boot inside that request: its configuration, listeners and the
+         * extensions of a per-request service would be that request's alone. Loaded here,
+         * it is configuration like any other provider's, and comes first so the pools see
+         * the connections it adds. */
+        $app->loadDeferredProviders();
+
         self::configureDatabasePool($app);
 
         // Redis needs the same treatment: one shared connection would let concurrent
