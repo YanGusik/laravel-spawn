@@ -182,10 +182,47 @@ class AsyncServiceProvider extends ServiceProvider
             return;
         }
 
-        $this->app->singleton(
+        // spatie binds its registrar in boot(), after every provider's register().
+        $this->adaptExactly(
+            \Spatie\Permission\PermissionRegistrar::class,
             \Spatie\Permission\PermissionRegistrar::class,
             \Spawn\Laravel\Permission\AsyncPermissionRegistrar::class,
+            fn ($stock, $app) => new \Spawn\Laravel\Permission\AsyncPermissionRegistrar($app['cache']),
         );
+    }
+
+    /**
+     * Swap a package's service for its adapter when the container builds it, if it is exactly the
+     * package's own class.
+     *
+     * An extender, not a binding: it outlives the package's own singleton() whenever that runs,
+     * after this provider or in its boot(), and it never runs for a package the application
+     * does not register, so a class in vendor/ alone binds nothing. A subclass or decorator of
+     * the application's is left as it is, and said so: replacing it would drop its behaviour.
+     *
+     * @param  class-string  $stock  the class the package builds
+     * @param  class-string  $adapter
+     * @param  \Closure(object, \Illuminate\Contracts\Foundation\Application): object  $adapt
+     */
+    private function adaptExactly(string $abstract, string $stock, string $adapter, \Closure $adapt): void
+    {
+        if ($this->app->resolved($abstract)) {
+            error_log("[async] {$abstract} was resolved before the package's adapter was registered: "
+                ."what already holds it keeps the shared {$stock}");
+        }
+
+        $this->app->extend($abstract, static function (object $service, $app) use ($abstract, $stock, $adapter, $adapt) {
+            if ($service::class === $stock) {
+                return $adapt($service, $app);
+            }
+
+            if (! $service instanceof $adapter) {
+                error_log("[async] {$abstract} is ".$service::class.", not {$stock}: it is left as it is, "
+                    .'and its state is shared by every request of the worker');
+            }
+
+            return $service;
+        });
     }
 
     private function registerInertiaAdapter(): void
@@ -199,9 +236,12 @@ class AsyncServiceProvider extends ServiceProvider
             fn ($app) => new SsrState(),
         );
 
-        $this->app->singleton(
+        // Inertia's provider binds the factory in its register(), which may come after this one.
+        $this->adaptExactly(
+            \Inertia\ResponseFactory::class,
             \Inertia\ResponseFactory::class,
             \Spawn\Laravel\Inertia\AsyncResponseFactory::class,
+            fn ($stock, $app) => $app->build(\Spawn\Laravel\Inertia\AsyncResponseFactory::class),
         );
     }
 
@@ -512,27 +552,42 @@ class AsyncServiceProvider extends ServiceProvider
 
     private function registerViewAdapter(): void
     {
-        // Replace the stock View Factory with our async-safe version.
-        // ViewServiceProvider is never deferred, so a simple singleton() rebinding
-        // works — AsyncServiceProvider always registers after ViewServiceProvider
-        // in the provider list, so we overwrite cleanly.
+        // Replace the stock View Factory with our async-safe version, from the one
+        // ViewServiceProvider builds: an extender, since an application's own subclass of
+        // that provider registers after this one, and an application without it has no view.
         //
         // One factory per worker, deliberately: templates receive it as $__env,
         // Component::$factory caches it in a static, and MailManager and Markdown keep it
         // in their constructors. What is per-request is the state it writes — see
         // AsyncViewFactory.
-        $this->app->singleton('view', function ($app) {
-            $factory = new \Spawn\Laravel\View\AsyncViewFactory(
-                $app['view.engine.resolver'],
-                $app['view.finder'],
-                $app['events'],
-            );
+        $this->adaptExactly(
+            'view',
+            \Illuminate\View\Factory::class,
+            \Spawn\Laravel\View\AsyncViewFactory::class,
+            static function (\Illuminate\View\Factory $stock, $app): \Spawn\Laravel\View\AsyncViewFactory {
+                $factory = new \Spawn\Laravel\View\AsyncViewFactory(
+                    $stock->getEngineResolver(),
+                    $stock->getFinder(),
+                    $stock->getDispatcher(),
+                );
 
-            $factory->setContainer($app);
-            $factory->share('app', $app);
+                $factory->setContainer($app);
 
-            return $factory;
-        });
+                // Composers and creators live on the dispatcher, namespaces and hints on the finder.
+                foreach ($stock->getShared() as $key => $value) {
+                    if ($key !== '__env') {
+                        $factory->share($key, $value);
+                    }
+                }
+
+                // addExtension() puts each one first, so the last added is the first tried.
+                foreach (array_reverse($stock->getExtensions(), true) as $extension => $engine) {
+                    $factory->addExtension($extension, $engine);
+                }
+
+                return $factory;
+            },
+        );
     }
 
     private function registerLogContextAdapter(): void

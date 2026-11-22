@@ -19,6 +19,20 @@ return [
 
     /*
     |--------------------------------------------------------------------------
+    | Boot Providers
+    |--------------------------------------------------------------------------
+    |
+    | Service providers registered when a worker starts, after the deferred
+    | ones. A provider Laravel defers until an event (`when()`) would otherwise
+    | register inside the request that fires it, and what it configures would
+    | reach that request only. The worker names such a provider in the error log.
+    |
+    */
+
+    'boot_providers' => [],
+
+    /*
+    |--------------------------------------------------------------------------
     | Startup Diagnostics
     |--------------------------------------------------------------------------
     |
