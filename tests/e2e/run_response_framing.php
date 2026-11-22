@@ -186,6 +186,96 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, &$exi
         $early['status'] === 500 && !str_contains($early['body'], 'hunter2') && trim($early['body']) === 'Internal Server Error'
     );
 
+    // flush() alone reaches no output handler; a full buffer has to leave before the wait ends.
+    $fp = @stream_socket_client("tcp://{$host}:{$port}", $en, $es, 1);
+    $firstByteAfter = null;
+    if ($fp) {
+        $sentAt = microtime(true);
+        fwrite($fp, "GET /framing/flush-then-wait HTTP/1.1\r\nHost: {$host}\r\nConnection: close\r\n\r\n");
+        $raw = '';
+        while (!feof($fp)) {
+            $c = fread($fp, 8192);
+            if ($c === false || $c === '') { break; }
+            $raw .= $c;
+            $split = strpos($raw, "\r\n\r\n");
+            if ($split !== false && str_contains(substr($raw, $split), 'FFFF')) {
+                $firstByteAfter = microtime(true) - $sentAt;
+                break;
+            }
+        }
+        fclose($fp);
+    }
+    $check(
+        'streaming: a full buffer of a stream reaches the client before the callback returns ('
+            . ($firstByteAfter === null ? 'never' : round($firstByteAfter * 1000) . ' ms') . ')',
+        $firstByteAfter !== null && $firstByteAfter < 1.0
+    );
+
+    $popOnce = $request('GET', '/framing/pop-once');
+    $check(
+        'streaming: a body that pops the forwarding buffer once still arrives (' . strlen($popOnce['body']) . ' bytes)',
+        $popOnce['status'] === 200 && $popOnce['body'] === 'BODY-AFTER-POP'
+    );
+
+    $popThenBuffer = $request('GET', '/framing/pop-then-buffer');
+    $check(
+        'streaming: and so does one that pops it and opens its own buffer (' . strlen($popThenBuffer['body']) . ' bytes)',
+        $popThenBuffer['status'] === 200 && $popThenBuffer['body'] === 'OWNTAIL'
+    );
+
+    // Nothing can put a buffer back once all are gone: the request fails rather than answering
+    // an empty 200 and writing the body to the worker's standard output.
+    $popAll = $request('GET', '/framing/pop-all');
+    $check(
+        'streaming: a body that pops every buffer answers 500 (' . $popAll['status'] . ')',
+        $popAll['status'] === 500
+    );
+
+    // Chunked framing ends with a zero-length chunk; a body cut short must not get one.
+    $rawOf = static function (string $path) use ($host, $port): string {
+        $fp = @stream_socket_client("tcp://{$host}:{$port}", $en, $es, 1);
+        if (!$fp) { return ''; }
+        fwrite($fp, "GET {$path} HTTP/1.1\r\nHost: {$host}\r\nConnection: close\r\n\r\n");
+        $raw = '';
+        while (!feof($fp)) { $c = fread($fp, 8192); if ($c === false || $c === '') break; $raw .= $c; }
+        fclose($fp);
+
+        return $raw;
+    };
+
+    foreach (['/framing/stream-throws-late', '/framing/pop-all-late'] as $path) {
+        $raw = $rawOf($path);
+        $check(
+            "streaming: {$path} fails after its first chunk and the client sees the body cut short",
+            str_contains($raw, 'LLLL') && !str_ends_with($raw, "0\r\n\r\n")
+        );
+    }
+
+    // A client that hangs up stops an endless event stream: connection_aborted() stays 0 under
+    // the server, so the failed write has to end the generator.
+    $counter = sys_get_temp_dir() . '/spawn-framing-sse-ticks-' . getmypid();
+    @unlink($counter);
+    $fp = @stream_socket_client("tcp://{$host}:{$port}", $en, $es, 1);
+    if ($fp) {
+        fwrite($fp, "GET /framing/sse-forever HTTP/1.1\r\nHost: {$host}\r\n\r\n");
+        $raw = '';
+        while (!feof($fp) && !str_contains($raw, 'tick 1')) {
+            $c = fread($fp, 8192);
+            if ($c === false || $c === '') { break; }
+            $raw .= $c;
+        }
+        fclose($fp);
+    }
+    delay(300);
+    $ticksThen = (int) @file_get_contents($counter);
+    delay(300);
+    $ticksLater = (int) @file_get_contents($counter);
+    $check(
+        "streaming: an event stream stops once its client hangs up ({$ticksThen} then {$ticksLater} ticks)",
+        $ticksThen > 0 && $ticksThen === $ticksLater
+    );
+    @unlink($counter);
+
     // The worker is still serving after all of that, which a failed stream can cost.
     $after = $request('GET', '/ping');
     $check('framing: the worker still answers afterwards', $after['status'] === 200 && trim($after['body']) === 'pong');

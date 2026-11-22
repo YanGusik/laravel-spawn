@@ -329,9 +329,15 @@ return [
         | When enabled, the server watches the configured paths and automatically
         | reloads whenever a file changes.
         |
+        | It is on in the local environment and off elsewhere unless
+        | ASYNC_HOT_RELOAD says otherwise. A SIGHUP reloads the workers in every
+        | environment.
+        |
         | Paths are relative to the application base path.
         |
         */
+
+        'hot_reload' => (bool) env('ASYNC_HOT_RELOAD', env('APP_ENV') === 'local'),
 
         'hot_reload_paths' => [
             'app',
