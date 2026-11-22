@@ -20,9 +20,9 @@ jobs:
         # advisory, which composer still installs. The other job is whatever composer
         # resolves today, transitive dependencies included.
         laravel: ["13.40.0", "^13.0"]
-    # For the tests that need a real server behind the PDO pool (PooledLostConnectionTest);
-    # without SPAWN_TEST_MYSQL_DSN they skip.
     services:
+      # For the tests that need a real server behind the PDO pool (PooledLostConnectionTest);
+      # without SPAWN_TEST_MYSQL_DSN they skip.
       mariadb:
         image: mariadb:10.11
         env:
@@ -34,6 +34,15 @@ jobs:
           - 3306:3306
         options: >-
           --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+      # For the tests that need a real server behind the Redis pool (RedisPoolTest,
+      # RedisRawWindowTest); without one on 127.0.0.1:6379 they skip.
+      redis:
+        image: redis:7
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd="redis-cli ping"
           --health-interval=5s --health-timeout=5s --health-retries=20
     steps:
       - uses: actions/checkout@v4
