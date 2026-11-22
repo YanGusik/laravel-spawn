@@ -1,6 +1,6 @@
 name: Laravel drift
 
-# The four Eloquent files under overrides/ are copies, each frozen against the variant of the
+# The seven Eloquent files under overrides/ are copies, each frozen against the variant of the
 # Laravel file it was taken from. A newer Laravel that touches one of them leaves an application on Laravel's own
 # class for that group of copies — the defect comes back, quietly, with a line on stderr. This
 # job installs the newest Laravel 13 every night and fails when that has happened, so the

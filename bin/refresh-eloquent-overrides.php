@@ -3,7 +3,7 @@
 /**
  * Take a copy under overrides/ for each Eloquent file of the installed Laravel that has none.
  *
- * The four files this package puts in front of Eloquent are frozen against the variant of the
+ * The files this package puts in front of Eloquent are frozen against the variant of the
  * Laravel file they were copied from, and a release that moves one of them leaves its group on
  * Laravel's own classes until a copy of the new variant exists. Taking it is this script: it
  * copies every file whose checksum no copy was taken from, re-applies the edits, writes the
@@ -13,23 +13,31 @@
  * It is a tool for whoever updates the package, not part of it — nothing at runtime runs it,
  * and its output is committed as plain files.
  *
- *   php bin/refresh-eloquent-overrides.php
+ *   php bin/refresh-eloquent-overrides.php [vendor directory]
  *
- * Every replacement below is asserted. When one no longer matches, the script stops and names
- * it: Laravel has changed that code, and the edit has to be redone by hand rather than guessed.
+ * The vendor directory defaults to the package's own; another one, holding a different Laravel
+ * release, takes the copies for that release without reinstalling the package.
+ *
+ * Every replacement below is asserted, and so is the number of times Eloquent reaches each
+ * replaced static, in any of its files: a release that adds a reader or a writer of one outside
+ * the edited lines would leave the copy covering part of it. When an assertion fails, the script
+ * names it and leaves that file's copy unwritten: Laravel has changed that code, and the edit
+ * has to be redone by hand rather than guessed. The copies of the other files are still
+ * written, because the groups are installed independently, and the script exits non-zero.
  */
 
 $root = dirname(__DIR__);
-$eloquent = $root.'/vendor/laravel/framework/src/Illuminate/Database/Eloquent';
+$vendor = $argv[1] ?? $root.'/vendor';
+$eloquent = $vendor.'/laravel/framework/src/Illuminate/Database/Eloquent';
 
 if (! is_dir($eloquent)) {
-    fwrite(STDERR, "Laravel is not installed under vendor/.\n");
+    fwrite(STDERR, "Laravel is not installed under $vendor.\n");
     exit(1);
 }
 
 require $root.'/src/Database/Eloquent/EloquentOverrides.php';
 
-$application = file_get_contents($root.'/vendor/laravel/framework/src/Illuminate/Foundation/Application.php');
+$application = file_get_contents($vendor.'/laravel/framework/src/Illuminate/Foundation/Application.php');
 
 if (! preg_match("/const VERSION = '([^']+)'/", $application, $version)) {
     fwrite(STDERR, "The installed Laravel release could not be read from Application::VERSION.\n");
@@ -38,15 +46,55 @@ if (! preg_match("/const VERSION = '([^']+)'/", $application, $version)) {
 
 $release = $version[1];
 
+/** @var array<string, string> $failures  file => what no longer matched */
+$failures = [];
+
 /**
- * @param  list<array{0: string, 1: string}>  $replacements
+ * How many times Eloquent reaches a static property by name — `static::$name`, `self::$name`,
+ * `Model::$name`, `$model::$name` — in any of its files.
  */
-function rewrite(string $source, array $replacements, string $what): string
+function staticUses(string $property): int
 {
+    global $eloquent;
+
+    $uses = 0;
+    $files = new RecursiveIteratorIterator(new RecursiveDirectoryIterator($eloquent, FilesystemIterator::SKIP_DOTS));
+
+    foreach ($files as $file) {
+        if ($file->getExtension() === 'php') {
+            $uses += preg_match_all('/::\$'.preg_quote($property, '/').'\b/', file_get_contents($file->getPathname()));
+        }
+    }
+
+    return $uses;
+}
+
+/**
+ * The Laravel file with the edits applied, or null when one no longer matches; the mismatch is
+ * then printed and kept in $failures.
+ *
+ * @param  list<array{0: string, 1: string}>  $replacements
+ * @param  array<string, int>  $uses  static property => how many times Eloquent reaches it
+ */
+function rewrite(string $source, array $replacements, string $what, array $uses = []): ?string
+{
+    global $failures;
+
+    foreach ($uses as $property => $times) {
+        if (staticUses($property) !== $times) {
+            $failures[$what] = "Eloquent no longer reaches \$$property $times times: a reader or a writer was added or removed";
+            fwrite(STDERR, "$what: {$failures[$what]}, redo the edit by hand.\n");
+
+            return null;
+        }
+    }
+
     foreach ($replacements as [$from, $to]) {
         if (substr_count($source, $from) !== 1) {
+            $failures[$what] = 'a replaced fragment no longer appears exactly once';
             fwrite(STDERR, "$what: this no longer appears exactly once, redo the edit by hand:\n\n$from\n");
-            exit(1);
+
+            return null;
         }
 
         $source = str_replace($from, $to, $source);
@@ -318,6 +366,140 @@ PHP,
     ],
 ], 'HasEvents');
 
+// --- HasTimestamps: the withoutTimestampsOn() classes move into the coroutine ---------------
+
+$hasTimestamps = rewrite(file_get_contents($eloquent.'/Concerns/HasTimestamps.php'), [
+    [
+        'use Illuminate\Support\Facades\Date;',
+        "use Illuminate\Support\Facades\Date;\nuse Spawn\\Laravel\\Database\\Eloquent\\IgnoredClassesWindow;",
+    ],
+    [
+        <<<'PHP'
+        static::$ignoreTimestampsOn = array_values(array_merge(static::$ignoreTimestampsOn, $models));
+
+        try {
+            return $callback();
+        } finally {
+            foreach ($models as $model) {
+                if (($key = array_search($model, static::$ignoreTimestampsOn, true)) !== false) {
+                    unset(static::$ignoreTimestampsOn[$key]);
+                }
+            }
+        }
+PHP,
+        <<<'PHP'
+        // The window replaces the shared list upstream adds the classes to here: a callback
+        // that suspends would otherwise have every coroutine of this worker save its rows
+        // without timestamps until it resumed.
+        return IgnoredClassesWindow::open(IgnoredClassesWindow::TIMESTAMPS, $models, static fn () => $callback());
+PHP,
+    ],
+    [
+        'return array_any(static::$ignoreTimestampsOn, fn ($ignoredClass) => $class === $ignoredClass || is_subclass_of($class, $ignoredClass));',
+        'return IgnoredClassesWindow::ignores(IgnoredClassesWindow::TIMESTAMPS, $class, static::$ignoreTimestampsOn);',
+    ],
+], 'HasTimestamps', ['ignoreTimestampsOn' => 5]);
+
+// --- BroadcastsEvents: the broadcast gate reads the coroutine's window ----------------------
+
+$broadcastsEvents = rewrite(file_get_contents($eloquent.'/BroadcastsEvents.php'), [
+    [
+        'use Illuminate\Support\Arr;',
+        "use Illuminate\Support\Arr;\nuse Spawn\\Laravel\\Database\\Eloquent\\BroadcastWindow;",
+    ],
+    [
+        'if (! static::$isBroadcasting) {',
+        'if (! BroadcastWindow::isBroadcasting(static::$isBroadcasting)) {',
+    ],
+], 'BroadcastsEvents', ['isBroadcasting' => 4]);
+
+// --- Model: touching, broadcasting and the isset() strict-mode switch move into the coroutine
+
+$model = rewrite(file_get_contents($eloquent.'/Model.php'), [
+    [
+        'use Stringable;',
+        "use Spawn\\Laravel\\Database\\Eloquent\\BroadcastWindow;\n"
+            ."use Spawn\\Laravel\\Database\\Eloquent\\IgnoredClassesWindow;\n"
+            ."use Spawn\\Laravel\\Database\\Eloquent\\MissingAttributeWindow;\n"
+            .'use Stringable;',
+    ],
+    [
+        <<<'PHP'
+        static::$ignoreOnTouch = array_values(array_merge(static::$ignoreOnTouch, $models));
+
+        try {
+            $callback();
+        } finally {
+            static::$ignoreOnTouch = array_values(array_diff(static::$ignoreOnTouch, $models));
+        }
+PHP,
+        <<<'PHP'
+        // The window replaces the shared list upstream adds the classes to here: a callback
+        // that suspends would otherwise leave the parents of every coroutine of this worker
+        // untouched until it resumed.
+        IgnoredClassesWindow::open(IgnoredClassesWindow::TOUCH, $models, static fn () => $callback());
+PHP,
+    ],
+    [
+        'return array_any(static::$ignoreOnTouch, fn ($ignoredClass) => $class === $ignoredClass || is_subclass_of($class, $ignoredClass));',
+        'return IgnoredClassesWindow::ignores(IgnoredClassesWindow::TOUCH, $class, static::$ignoreOnTouch);',
+    ],
+    [
+        <<<'PHP'
+        $isBroadcasting = static::$isBroadcasting;
+
+        static::$isBroadcasting = false;
+
+        try {
+            return $callback();
+        } finally {
+            static::$isBroadcasting = $isBroadcasting;
+        }
+PHP,
+        <<<'PHP'
+        // The window replaces the save, write and restore of the static upstream makes here:
+        // a callback that suspends would otherwise silence every coroutine's broadcasts, and
+        // two overlapping calls would leave them off for good.
+        return BroadcastWindow::open(static fn () => $callback());
+PHP,
+    ],
+    [
+        <<<'PHP'
+        return static::$modelsShouldPreventAccessingMissingAttributes;
+PHP,
+        <<<'PHP'
+        return MissingAttributeWindow::prevents(static::$modelsShouldPreventAccessingMissingAttributes);
+PHP,
+    ],
+    [
+        <<<'PHP'
+        $shouldPrevent = static::$modelsShouldPreventAccessingMissingAttributes;
+
+        static::$modelsShouldPreventAccessingMissingAttributes = false;
+
+        try {
+            return ! is_null($this->getAttribute($offset));
+        } finally {
+            static::$modelsShouldPreventAccessingMissingAttributes = $shouldPrevent;
+        }
+PHP,
+        <<<'PHP'
+        if (! static::$modelsShouldPreventAccessingMissingAttributes) {
+            return ! is_null($this->getAttribute($offset));
+        }
+
+        // The window replaces the save, write and restore of the static upstream makes here:
+        // an accessor that suspends would otherwise turn strict mode off for every coroutine
+        // of this worker, and two overlapping reads would leave it off for good.
+        return MissingAttributeWindow::open(fn () => ! is_null($this->getAttribute($offset)));
+PHP,
+    ],
+], 'Model', [
+    'ignoreOnTouch' => 5,
+    'isBroadcasting' => 4,
+    'modelsShouldPreventAccessingMissingAttributes' => 5,
+]);
+
 $written = 0;
 
 foreach ([
@@ -325,7 +507,16 @@ foreach ([
     'Illuminate\Database\Eloquent\Concerns\HasRelationships' => ['Concerns/HasRelationships.php', $hasRelationships],
     'Illuminate\Database\Eloquent\Concerns\GuardsAttributes' => ['Concerns/GuardsAttributes.php', $guardsAttributes],
     'Illuminate\Database\Eloquent\Concerns\HasEvents' => ['Concerns/HasEvents.php', $hasEvents],
+    'Illuminate\Database\Eloquent\Concerns\HasTimestamps' => ['Concerns/HasTimestamps.php', $hasTimestamps],
+    'Illuminate\Database\Eloquent\BroadcastsEvents' => ['BroadcastsEvents.php', $broadcastsEvents],
+    'Illuminate\Database\Eloquent\Model' => ['Model.php', $model],
 ] as $class => [$relative, $copy]) {
+    if ($copy === null) {
+        echo "  $class: not written, see above\n";
+
+        continue;
+    }
+
     $checksum = hash_file('sha256', $eloquent.'/'.$relative);
     $existing = Spawn\Laravel\Database\Eloquent\EloquentOverrides::copyFor($class, $checksum);
 
@@ -347,4 +538,6 @@ foreach ([
     echo "  $class: written; add to EloquentOverrides::GROUPS:\n      '$checksum' => '$release',\n";
 }
 
-echo $written === 0 ? "\nEvery file of Laravel $release already has its copy.\n" : "\n";
+echo $written === 0 && $failures === [] ? "\nEvery file of Laravel $release already has its copy.\n" : "\n";
+
+exit($failures === [] ? 0 : 1);
