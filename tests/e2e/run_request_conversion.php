@@ -110,13 +110,76 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, $tlsP
         if (!$fp) { return [null, 0]; }
         $local = stream_socket_get_name($fp, false);
         $localPort = (int) substr($local, strrpos($local, ':') + 1);
-        $lines = array_merge(['Host: ' . ($hostHeader ?? "{$host}:{$target_port}"), 'Connection: close'], $headers);
-        fwrite($fp, "GET {$target} HTTP/1.1\r\n" . implode("\r\n", $lines) . "\r\n\r\n");
+        // An empty $hostHeader sends none, as an HTTP/1.0 health check does; 1.1 requires one.
+        $lines = $hostHeader === ''
+            ? array_merge(['Connection: close'], $headers)
+            : array_merge(['Host: ' . ($hostHeader ?? "{$host}:{$target_port}"), 'Connection: close'], $headers);
+        $version = $hostHeader === '' ? '1.0' : '1.1';
+        fwrite($fp, "GET {$target} HTTP/{$version}\r\n" . implode("\r\n", $lines) . "\r\n\r\n");
         $raw = '';
         while (!feof($fp)) { $c = fread($fp, 8192); if ($c === false || $c === '') break; $raw .= $c; }
         fclose($fp);
         $pos = strpos($raw, "\r\n\r\n");
         return [$pos === false ? null : json_decode(substr($raw, $pos + 4), true), $localPort];
+    };
+
+    /**
+     * One GET over cleartext HTTP/2 with prior knowledge, sent by hand so the check needs no
+     * ext-curl: the preface, an empty SETTINGS, and a HEADERS frame of literal fields without
+     * Huffman coding. Answers the decoded JSON of the DATA frames of stream 1.
+     */
+    $getHttp2 = static function (string $target, string $authority) use ($host, $port): ?array {
+        $fp = @stream_socket_client("tcp://{$host}:{$port}", $en, $es, 1);
+        if (!$fp) { return null; }
+
+        $frame = static fn (int $type, int $flags, int $stream, string $payload): string =>
+            substr(pack('N', strlen($payload)), 1) . chr($type) . chr($flags) . pack('N', $stream) . $payload;
+        $field = static fn (string $name, string $value): string =>
+            "\x00" . chr(strlen($name)) . $name . chr(strlen($value)) . $value;
+
+        $block = $field(':method', 'GET') . $field(':scheme', 'http')
+            . $field(':path', $target) . $field(':authority', $authority);
+
+        fwrite($fp, "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n" . $frame(0x4, 0, 0, '') . $frame(0x1, 0x5, 1, $block));
+
+        $buffer = '';
+        $body = '';
+        $deadline = microtime(true) + 5;
+
+        while (microtime(true) < $deadline && !feof($fp)) {
+            $chunk = fread($fp, 8192);
+            if ($chunk === false) { break; }
+            $buffer .= $chunk;
+
+            while (strlen($buffer) >= 9) {
+                $length = unpack('N', "\x00" . substr($buffer, 0, 3))[1];
+                if (strlen($buffer) < 9 + $length) { break; }
+
+                $type = ord($buffer[3]);
+                $flags = ord($buffer[4]);
+                $stream = unpack('N', substr($buffer, 5, 4))[1] & 0x7fffffff;
+                $payload = substr($buffer, 9, $length);
+                $buffer = substr($buffer, 9 + $length);
+
+                if ($type === 0x4 && ($flags & 0x1) === 0) {
+                    fwrite($fp, $frame(0x4, 0x1, 0, ''));
+                }
+
+                if ($type === 0x0 && $stream === 1) {
+                    $body .= $payload;
+
+                    if (($flags & 0x1) !== 0) {
+                        fclose($fp);
+
+                        return json_decode($body, true);
+                    }
+                }
+            }
+        }
+
+        fclose($fp);
+
+        return null;
     };
 
     [$seen, $localPort] = $get('/echo-request', ['X-Forwarded-For: 203.0.113.9']);
@@ -175,6 +238,48 @@ $main = spawn(static function () use ($autoload, $bootstrap, $host, $port, $tlsP
             $seen
         );
     }
+
+    // Profilers and middleware measure a request as microtime(true) - REQUEST_TIME_FLOAT.
+    $before = microtime(true);
+    [$seen] = $get('/echo-request');
+    $after = microtime(true);
+    $float = $seen['request_time_float'] ?? null;
+
+    $check(
+        'request time: REQUEST_TIME_FLOAT is the time the request was taken in, REQUEST_TIME its second',
+        is_float($float) && $float >= $before && $float <= $after
+            && ($seen['request_time'] ?? null) === (int) $float,
+        $seen
+    );
+
+    // Without a Host header Symfony reads SERVER_PORT, which has to be the listener's.
+    [$seen] = $get('/echo-request', [], '');
+
+    $check(
+        'port: a request without a Host header has the plaintext listener port as SERVER_PORT',
+        ($seen['server_port'] ?? null) === $port && ($seen['url'] ?? null) === "http://localhost:{$port}/x",
+        $seen
+    );
+
+    if ($serverKnowsTls) {
+        [$seen] = $get('/echo-request', [], '', true);
+
+        $check(
+            'port: and the TLS listener port on TLS',
+            ($seen['server_port'] ?? null) === $tlsPort && ($seen['url'] ?? null) === "https://localhost:{$tlsPort}/x",
+            $seen
+        );
+    }
+
+    // HTTP/2 carries the origin in :authority, with no Host header; the server maps it.
+    $h2 = $getHttp2('/echo-request', "{$host}:{$port}");
+
+    $check(
+        'host: an HTTP/2 request takes its host and port from :authority',
+        ($h2['http_host'] ?? null) === "{$host}:{$port}" && ($h2['server_port'] ?? null) === $port
+            && ($h2['protocol'] ?? null) === 'HTTP/2.0',
+        $h2
+    );
 
     // X-Forwarded-Proto is the proxy's word; without TrustProxies it changes nothing.
     [$seen] = $get('/echo-request', ['X-Forwarded-Proto: https']);

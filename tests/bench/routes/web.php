@@ -222,6 +222,10 @@ $router->get('/echo-request', fn (Illuminate\Http\Request $request) => response(
     'https' => $request->server('HTTPS'),
     'secure' => $request->isSecure(),
     'url' => url('/x'),
+    'http_host' => $request->server('HTTP_HOST'),
+    'protocol' => $request->server('SERVER_PROTOCOL'),
+    'request_time' => $request->server('REQUEST_TIME'),
+    'request_time_float' => $request->server('REQUEST_TIME_FLOAT'),
 ]));
 
 // A stream that fails before its first byte: the exception escapes the kernel, which has
@@ -229,3 +233,4 @@ $router->get('/echo-request', fn (Illuminate\Http\Request $request) => response(
 $router->get('/framing/stream-fails-early', fn () => response()->stream(function () {
     throw new \RuntimeException('secret: SQLSTATE password=hunter2');
 }));
+

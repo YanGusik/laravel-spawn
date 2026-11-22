@@ -24,6 +24,14 @@ use function Async\spawn;
 
 class TrueAsyncServer implements ServerInterface
 {
+    /**
+     * SERVER_PORT for a request that names no port, keyed by whether it came over TLS; null where
+     * the bound listeners of that kind disagree, and the scheme's default port applies.
+     *
+     * @var array{plain: ?int, tls: ?int}
+     */
+    private array $listenerPorts = ['plain' => null, 'tls' => null];
+
     public function __construct(private $autoloadPath, private $bootstrapPath, private readonly array $options = [])
     {
     }
@@ -176,6 +184,8 @@ class TrueAsyncServer implements ServerInterface
             $config->setPrivateKey($keyPath);
         }
 
+        $this->listenerPorts = self::listenerPorts($listeners, $hasCert);
+
         foreach ($listeners as $listener) {
             $host     = $listener['host'] ?? '0.0.0.0';
             $port     = (int) ($listener['port'] ?? 8080);
@@ -197,14 +207,15 @@ class TrueAsyncServer implements ServerInterface
         }
 
 
-        $hotReloadPaths = config('async.server.hot_reload_paths', []);
-
-        if (app()->isProduction()) {
+        // A deploy reloads the workers with SIGHUP in every environment. Windows has none, and the call throws there.
+        if (PHP_OS_FAMILY !== 'Windows') {
             $config->enableReloadOnSignal();
-        } elseif ($hotReloadPaths !== []) {
-            $config->enableHotReload(
-                array_map(base_path(...), $hotReloadPaths)
-            );
+        }
+
+        $hotReloadPaths = self::hotReloadPaths($this->options, (string) app()->environment());
+
+        if ($hotReloadPaths !== []) {
+            $config->enableHotReload(array_map(base_path(...), $hotReloadPaths));
         }
 
         $config->setBacklog((int) ($this->options['backlog'] ?? 2048));
@@ -340,8 +351,58 @@ class TrueAsyncServer implements ServerInterface
         }
     }
 
+    /**
+     * The paths, relative to the base path, whose changes reload the workers; empty for none.
+     *
+     * `hot_reload` decides; a config published before it existed has no such key and watches in
+     * the local environment only, as the shipped default does.
+     *
+     * @internal
+     *
+     * @param  array<string, mixed>  $options  the `async.server` options
+     * @return list<string>
+     */
+    public static function hotReloadPaths(array $options, string $environment): array
+    {
+        if (! (bool) ($options['hot_reload'] ?? $environment === 'local')) {
+            return [];
+        }
+
+        return array_values($options['hot_reload_paths'] ?? []);
+    }
+
+    /**
+     * The port each kind of listener answers on, for a request whose Host header names none.
+     *
+     * The server does not say which listener took a connection, so the port is known only when
+     * every bound listener of that kind shares it. Only HTTP/1.0 sends no Host, so HTTP/2 and
+     * HTTP/3 listeners are left out: `auto` on 443 beside `http3` on 443 stays one port. A TLS
+     * listener without a certificate is not bound and does not count.
+     *
+     * @param  list<array<string, mixed>>  $listeners
+     * @return array{plain: ?int, tls: ?int}
+     */
+    private static function listenerPorts(array $listeners, bool $hasCert): array
+    {
+        $ports = ['plain' => [], 'tls' => []];
+
+        foreach ($listeners as $listener) {
+            $tls = ! empty($listener['tls']);
+
+            if (($tls && ! $hasCert) || in_array($listener['protocol'] ?? 'auto', ['http2', 'http3'], true)) {
+                continue;
+            }
+
+            $ports[$tls ? 'tls' : 'plain'][(int) ($listener['port'] ?? 8080)] = true;
+        }
+
+        return array_map(static fn (array $seen): ?int => count($seen) === 1 ? array_key_first($seen) : null, $ports);
+    }
+
     private function convertRequest(HttpRequest $request): Request
     {
+        // Taken in here: the server does not report when it read the request.
+        $now    = microtime(true);
         $uri    = $request->getUri();
         $path   = $request->getPath();
         $method = $request->getMethod();
@@ -356,8 +417,11 @@ class TrueAsyncServer implements ServerInterface
         $serverPort = $secure ? 443 : 80;
         // TODO: refactoring
         if ($hostHeader !== '') {
+            // A Host without a port names the scheme's default (RFC 9110 §7.2), whatever port took it.
             [$serverName, $port] = HostHeader::split($hostHeader);
             $serverPort = $port ?? $serverPort;
+        } else {
+            $serverPort = $this->listenerPorts[$secure ? 'tls' : 'plain'] ?? $serverPort;
         }
 
         // TODO: refactoring and debug
@@ -383,6 +447,8 @@ class TrueAsyncServer implements ServerInterface
             'REMOTE_ADDR'     => $request->getRemoteAddress() ?? '127.0.0.1',
             'CONTENT_TYPE'    => $request->getContentType() ?? '',
             'CONTENT_LENGTH'  => $request->getContentLength() ?? '',
+            'REQUEST_TIME_FLOAT' => $now,
+            'REQUEST_TIME'       => (int) $now,
         ];
 
         if ($secure) {
