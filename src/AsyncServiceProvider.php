@@ -28,6 +28,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerInertiaAdapter();
         $this->registerSocialiteAdapter();
         $this->registerDebugbarAdapter();
+        $this->registerMcpAdapter();
         $this->registerViewAdapter();
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
@@ -74,6 +75,32 @@ class AsyncServiceProvider extends ServiceProvider
         if ($this->app->resolved(\Illuminate\Contracts\Http\Kernel::class)) {
             $prepend($this->app->make(\Illuminate\Contracts\Http\Kernel::class));
         }
+    }
+
+    private function registerMcpAdapter(): void
+    {
+        if (! class_exists(\Laravel\Mcp\Client\ClientManager::class)
+            || ! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        // The manager keeps the clients it connected, and the terminating callback of laravel/mcp
+        // disconnects them at the end of each request: one manager per request, as under php-fpm.
+        $this->app->scopedSingleton(
+            \Laravel\Mcp\Client\ClientManager::class,
+            static fn () => new \Laravel\Mcp\Client\ClientManager(),
+        );
+
+        // Mcp::registerClient() in a provider's boot() registers on the boot-time manager. Its
+        // factories are configuration; its connected clients are one request's sessions.
+        $this->app->scopedSeeder(
+            \Laravel\Mcp\Client\ClientManager::class,
+            static function (object $manager, object $bootManager): void {
+                (function (object $bootManager): void {
+                    $this->factories = $bootManager->factories + $this->factories;
+                })->call($manager, $bootManager);
+            },
+        );
     }
 
     private function registerDebugbarAdapter(): void

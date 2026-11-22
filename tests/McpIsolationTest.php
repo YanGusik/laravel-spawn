@@ -71,4 +71,21 @@ class McpIsolationTest extends AsyncTestCase
 
         $this->assertNotSame($results['a'], $results['b']);
     }
+
+    public function test_a_client_registered_at_boot_is_known_to_every_request(): void
+    {
+        if (! class_exists(\Laravel\Mcp\Client\ClientManager::class)) {
+            $this->markTestSkipped('laravel/mcp is not installed');
+        }
+
+        $app = $this->bootedApp([\Laravel\Mcp\Server\McpServiceProvider::class]);
+        $app->make(\Laravel\Mcp\Client\ClientManager::class)
+            ->registerClient('github', fn () => throw new \LogicException('not connected in this test'));
+        $app->enableAsyncMode();
+
+        $registered = fn () => (fn () => array_keys($this->factories))
+            ->call($app->make(\Laravel\Mcp\Client\ClientManager::class));
+
+        $this->assertSame(['a' => ['github'], 'b' => ['github']], $this->runParallel(['a' => $registered, 'b' => $registered]));
+    }
 }
