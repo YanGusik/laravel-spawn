@@ -41,6 +41,11 @@ final class WorkerBootstrap
          * the connections it adds. */
         $app->loadDeferredProviders();
 
+        // Providers Laravel registers only on an event, and any other an application wants at start.
+        foreach ($app->make('config')->get('async.boot_providers', []) as $provider) {
+            $app->register($provider);
+        }
+
         self::configureDatabasePool($app);
 
         // Redis needs the same treatment: one shared connection would let concurrent

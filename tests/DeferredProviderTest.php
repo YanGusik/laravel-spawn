@@ -5,6 +5,7 @@ namespace Spawn\Laravel\Tests;
 use Spawn\Laravel\Foundation\AsyncApplication;
 use Spawn\Laravel\Foundation\WorkerBootstrap;
 use Spawn\Laravel\Tests\Fixtures\DeferredSdkServiceProvider;
+use Spawn\Laravel\Tests\Fixtures\EventLoadedServiceProvider;
 
 /**
  * A deferred provider first loaded inside a request (#85, Issue 19). What it registers is
@@ -60,5 +61,39 @@ class DeferredProviderTest extends AsyncTestCase
         );
 
         $this->assertInstanceOf(\stdClass::class, $driver);
+    }
+
+    public function test_a_provider_registered_inside_a_request_is_named(): void
+    {
+        $app = $this->workerWithDeferredSdk();
+
+        $file = tempnam(sys_get_temp_dir(), 'deferred-provider');
+        $previous = ini_get('error_log');
+        ini_set('error_log', $file);
+
+        try {
+            $this->inRequest(function () use ($app): void {
+                \Spawn\Laravel\Foundation\RequestContext::begin();
+                $app->register(EventLoadedServiceProvider::class);
+            });
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+        }
+
+        $logged = (string) file_get_contents($file);
+        unlink($file);
+
+        $this->assertStringContainsString(EventLoadedServiceProvider::class.' was registered while a request', $logged);
+        $this->assertStringContainsString('async.boot_providers', $logged);
+    }
+
+    public function test_a_boot_provider_is_registered_at_worker_start(): void
+    {
+        $app = $this->bootedApp([]);
+        $app['config']->set('async.boot_providers', [EventLoadedServiceProvider::class]);
+
+        WorkerBootstrap::run($app);
+
+        $this->assertTrue($this->inRequest(fn () => $app['config']->get('event_loaded.ready')));
     }
 }

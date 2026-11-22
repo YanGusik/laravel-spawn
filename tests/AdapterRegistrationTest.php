@@ -11,6 +11,9 @@ use Spawn\Laravel\AsyncServiceProvider;
 use Spawn\Laravel\Foundation\AsyncApplication;
 use Spawn\Laravel\Foundation\WorkerBootstrap;
 use Spawn\Laravel\Permission\AsyncPermissionRegistrar;
+use Spawn\Laravel\Tests\Fixtures\AppViewFactory;
+use Spawn\Laravel\Tests\Fixtures\AppViewServiceProvider;
+use Spawn\Laravel\View\AsyncViewFactory;
 use Spatie\Permission\PermissionRegistrar;
 use Spatie\Permission\PermissionServiceProvider;
 
@@ -23,7 +26,7 @@ class AdapterRegistrationTest extends AsyncTestCase
     /**
      * @param  list<class-string>  $providers  registered in this order
      */
-    private function worker(array $providers): AsyncApplication
+    private function worker(array $providers, ?\Closure $beforeBoot = null): AsyncApplication
     {
         $app = new AsyncApplication(sys_get_temp_dir());
 
@@ -32,6 +35,7 @@ class AdapterRegistrationTest extends AsyncTestCase
             'async'      => ['scoped_services' => [], 'db_pool' => ['enabled' => false]],
             'cache'      => ['default' => 'array', 'stores' => ['array' => ['driver' => 'array']]],
             'permission' => require dirname(__DIR__).'/vendor/spatie/laravel-permission/config/permission.php',
+            'view'       => ['paths' => [], 'compiled' => sys_get_temp_dir()],
         ]));
 
         Facade::setFacadeApplication($app);
@@ -39,6 +43,10 @@ class AdapterRegistrationTest extends AsyncTestCase
 
         foreach ($providers as $provider) {
             $app->register($provider);
+        }
+
+        if ($beforeBoot !== null) {
+            $beforeBoot($app);
         }
 
         $app->boot();
@@ -83,5 +91,50 @@ class AdapterRegistrationTest extends AsyncTestCase
         $app = $this->worker($providers);
 
         $this->assertInstanceOf(AsyncPermissionRegistrar::class, $app->make(PermissionRegistrar::class));
+    }
+
+    public function test_an_application_view_provider_registered_after_the_package_gets_the_adapter(): void
+    {
+        $app = $this->worker([EventServiceProvider::class, AsyncServiceProvider::class, AppViewServiceProvider::class]);
+
+        $this->assertInstanceOf(AsyncViewFactory::class, $app->make('view'));
+        $this->assertSame($app, $app->make('view')->shared('app'));
+    }
+
+    public function test_a_view_factory_of_the_application_is_left_and_named(): void
+    {
+        $logged = $this->logged(function () use (&$app): void {
+            $app = $this->worker(
+                [EventServiceProvider::class, AsyncServiceProvider::class, AppViewServiceProvider::class],
+                static fn (AsyncApplication $app) => $app->singleton('view', fn ($app) => new AppViewFactory(
+                    $app['view.engine.resolver'], $app['view.finder'], $app['events'],
+                )),
+            );
+        });
+
+        $this->assertInstanceOf(AppViewFactory::class, $app->make('view'));
+        $this->assertStringContainsString('view is '.AppViewFactory::class, $logged);
+    }
+
+    /**
+     * Everything error_log() emits while the callback runs.
+     */
+    private function logged(callable $act): string
+    {
+        $file     = tempnam(sys_get_temp_dir(), 'adapter-registration');
+        $previous = ini_get('error_log');
+
+        ini_set('error_log', $file);
+
+        try {
+            $act();
+        } finally {
+            ini_set('error_log', $previous === false ? '' : $previous);
+        }
+
+        $written = (string) file_get_contents($file);
+        unlink($file);
+
+        return $written;
     }
 }
