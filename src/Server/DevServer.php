@@ -112,6 +112,7 @@ class DevServer implements ServerInterface
             $request = RequestParser::parse($raw, $remoteAddr);
 
             RequestContext::current()->set(ScopedService::REQUEST, $request);
+            \Spawn\Laravel\Sentry\SentryRequest::start();
 
             \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
@@ -133,6 +134,7 @@ class DevServer implements ServerInterface
             }
         } finally {
             TransactionSweep::afterRequest($this->app);
+            \Spawn\Laravel\Sentry\SentryRequest::end();
             $requestScope->dispose();
             fclose($client);
         }

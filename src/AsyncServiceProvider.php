@@ -29,6 +29,7 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerSocialiteAdapter();
         $this->registerDebugbarAdapter();
         $this->registerMcpAdapter();
+        $this->registerSentryAdapter();
         $this->registerViewAdapter();
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
@@ -74,6 +75,36 @@ class AsyncServiceProvider extends ServiceProvider
         // both paths reach gets the middleware once.
         if ($this->app->resolved(\Illuminate\Contracts\Http\Kernel::class)) {
             $prepend($this->app->make(\Illuminate\Contracts\Http\Kernel::class));
+        }
+    }
+
+    private function registerSentryAdapter(): void
+    {
+        if (! interface_exists(\Sentry\State\RuntimeContextStorageInterface::class)
+            || ! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        // Before any request starts a context: Sentry discards the active one when this changes.
+        \Sentry\SentrySdk::setRuntimeContextStorage(new \Spawn\Laravel\Sentry\RequestRuntimeContextStorage());
+
+        // The container's hub is the one boot built, which every request's hub is cloned from; the
+        // Facade, a type-hinted HubInterface and the log channel reach the request's through the adapter.
+        // sentry-laravel hands its own hub to SentrySdk inside the factory, before this runs.
+        $this->app->extend(\Sentry\State\HubInterface::class, static fn () => \Sentry\State\HubAdapter::getInstance());
+
+        if (class_exists(\Sentry\Laravel\Tracing\Middleware::class)) {
+            // The transaction and spans of the request it started.
+            $this->app->scopedSingleton(
+                \Sentry\Laravel\Tracing\Middleware::class,
+                fn ($app) => new \Sentry\Laravel\Tracing\Middleware(
+                    ($app['config']->get('sentry.tracing.continue_after_response') ?? true) === true,
+                ),
+            );
+            $this->app->scopedSingleton(
+                \Sentry\Laravel\Tracing\TransactionFinisher::class,
+                fn ($app) => $app->build(\Sentry\Laravel\Tracing\TransactionFinisher::class),
+            );
         }
     }
 

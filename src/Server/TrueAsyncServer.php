@@ -130,6 +130,8 @@ class TrueAsyncServer implements ServerInterface
 
         $kernel = $app->make(Kernel::class);
 
+        \Spawn\Laravel\Sentry\SentryRequest::start();
+
         try {
             $laravelResponse = $kernel->handle($request);
 
@@ -148,6 +150,7 @@ class TrueAsyncServer implements ServerInterface
         } finally {
             // Also when handle() itself throws: its rendering failed, or a RequestHandled listener threw.
             TransactionSweep::afterRequest($app);
+            \Spawn\Laravel\Sentry\SentryRequest::end();
         }
     }
 
