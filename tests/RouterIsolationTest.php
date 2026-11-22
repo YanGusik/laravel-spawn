@@ -134,4 +134,117 @@ class RouterIsolationTest extends AsyncTestCase
 
         $this->assertSame(['slow', 'fast'], $results['a']);
     }
+
+    /**
+     * `Route::respondWithRoute()` is how an exception handler answers with a named route, a
+     * custom 404 page among them; upstream reads the request from a property async mode leaves
+     * empty.
+     */
+    public function test_respond_with_route_answers_inside_a_request(): void
+    {
+        $router = $this->makeRouter(AsyncRouter::class);
+        $router->getRoutes()->refreshNameLookups();
+        $router->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($router) {
+                $router->dispatch(Request::create('/fast'));
+
+                return $router->respondWithRoute('slow')->getContent();
+            },
+        ]);
+
+        $this->assertSame('slow', $results['a']);
+    }
+
+    /**
+     * The collection keeps one Route per definition, and binding writes the request's
+     * parameters onto it: two requests answering with the same named route must each read
+     * their own.
+     */
+    public function test_respond_with_route_keeps_each_request_parameters(): void
+    {
+        $router = $this->makeRouter(AsyncRouter::class);
+        $router->get('/item/{id}', function () use ($router) {
+            delay(50);
+
+            return $router->getCurrentRequest()->route('id');
+        })->name('item');
+        $router->getRoutes()->refreshNameLookups();
+        $router->bootCompleted();
+
+        $results = $this->runParallel([
+            'a' => function () use ($router) {
+                $router->dispatch(Request::create('/item/1'));
+
+                return $router->respondWithRoute('item')->getContent();
+            },
+            'b' => function () use ($router) {
+                delay(25);
+                $router->dispatch(Request::create('/item/2'));
+
+                return $router->respondWithRoute('item')->getContent();
+            },
+        ]);
+
+        $this->assertSame(['a' => '1', 'b' => '2'], $results);
+    }
+
+    /**
+     * An exception from a global middleware — maintenance mode, a body-size check — is
+     * rendered before the router has dispatched anything, and a handler answering it with a
+     * named route still has the request the container holds.
+     */
+    public function test_respond_with_route_answers_before_any_dispatch(): void
+    {
+        $app = new \Spawn\Laravel\Foundation\AsyncApplication(sys_get_temp_dir());
+        $app->instance('config', new \Illuminate\Config\Repository(['async' => ['scoped_services' => []]]));
+        $router = new AsyncRouter(new Dispatcher($app), $app);
+        $router->get('/down', fn () => 'down')->name('down');
+        $router->getRoutes()->refreshNameLookups();
+        $router->bootCompleted();
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => function () use ($app, $router) {
+                $app->instance('request', Request::create('/anything'));
+
+                return $router->respondWithRoute('down')->getContent();
+            },
+        ]);
+
+        $this->assertSame('down', $results['a']);
+    }
+
+    /**
+     * A 404 answered with a fallback route: the route a controller receives by type-hint, the
+     * one Route::current() names and the one the request resolves must be the same.
+     */
+    public function test_respond_with_route_is_the_current_and_the_injected_route(): void
+    {
+        $app = new \Spawn\Laravel\Foundation\AsyncApplication(sys_get_temp_dir());
+        $app->instance('config', new \Illuminate\Config\Repository(['async' => ['scoped_services' => []]]));
+        $router = new AsyncRouter(new Dispatcher($app), $app);
+        $router->get('/missing-page', fn () => implode(',', [
+            $app->make(Route::class)->getName(),
+            $router->current()?->getName(),
+            $router->getCurrentRequest()->route()?->getName(),
+        ]))->name('fallback');
+        $router->getRoutes()->refreshNameLookups();
+        $router->bootCompleted();
+        $app->enableAsyncMode();
+
+        $results = $this->runParallel([
+            'a' => function () use ($router) {
+                try {
+                    $router->dispatch(Request::create('/no-such-path'));
+                } catch (\Symfony\Component\HttpKernel\Exception\NotFoundHttpException) {
+                }
+
+                return $router->respondWithRoute('fallback')->getContent();
+            },
+        ]);
+
+        $this->assertSame('fallback,fallback,fallback', $results['a']);
+    }
 }

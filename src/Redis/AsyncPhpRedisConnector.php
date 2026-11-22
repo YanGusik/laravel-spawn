@@ -20,6 +20,35 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
     }
 
     /**
+     * Stock connection outside pool mode; in pool mode one that keeps the rate limiter's
+     * switch to raw values in the coroutine that asked for it ({@see AsyncPhpRedisConnection}).
+     *
+     * @param  array  $config
+     * @param  array  $options
+     * @return \Illuminate\Redis\Connections\PhpRedisConnection
+     */
+    public function connect(array $config, array $options)
+    {
+        if (! $this->isPoolable()) {
+            return parent::connect($config, $options);
+        }
+
+        $formattedOptions = Arr::pull($config, 'options', []);
+
+        if (isset($config['prefix'])) {
+            $formattedOptions['prefix'] = $config['prefix'];
+        }
+
+        // The same merge as the stock connector, so that the raw client carries the prefix and
+        // every other option `redis.options` sets for all connections.
+        $merged = array_merge($config, $options, $formattedOptions);
+        $connector = fn () => $this->createClient($merged);
+        $rawConnector = fn () => $this->createRawClient($merged);
+
+        return new AsyncPhpRedisConnection($connector(), $connector, $config, $rawConnector);
+    }
+
+    /**
      * Create the Redis client instance.
      *
      * @param  array  $config
@@ -39,6 +68,35 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
     }
 
     /**
+     * A pooled client that sends and reads values as they are: the configuration's own, with the
+     * serializer and compression off, no multiplexed lanes and no warm sockets.
+     */
+    protected function createRawClient(array $config): Redis
+    {
+        $client = new Redis($this->rawConstructorOptions($config));
+
+        $this->applyTemplateOptions($client, array_merge($config, [
+            'serializer' => Redis::SERIALIZER_NONE,
+            'compression' => Redis::COMPRESSION_NONE,
+        ]));
+
+        return $client;
+    }
+
+    /**
+     * The raw pool's constructor options: the configured ones with no multiplexed lanes and no
+     * warm sockets, so that it opens nothing until a window sends a command.
+     */
+    protected function rawConstructorOptions(array $config): array
+    {
+        $options = $this->constructorOptions($config);
+        $options['pool']['min'] = 0;
+        $options['pool']['mux'] = 0;
+
+        return $options;
+    }
+
+    /**
      * The pool needs both the async runtime and a phpredis build that supports it.
      */
     protected function isPoolable(): bool
@@ -54,14 +112,21 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
      */
     protected function constructorOptions(array $config): array
     {
+        $host = $this->formatHost($config);
+
         $options = [
-            'host' => $this->formatHost($config),
-            'port' => (int) ($config['port'] ?? 6379),
+            'host' => $host,
+            // phpredis takes a host starting with `/` for a unix socket only with a port below 1,
+            // and opens 6379 itself for a TCP host with port 0: what the stock connector's
+            // missing port amounts to.
+            'port' => (int) ($config['port'] ?? 0),
             'pool' => [
                 'enabled' => true,
                 'min'     => (int) ($this->pool['min'] ?? 0),
                 'max'     => (int) ($this->pool['max'] ?? 10),
-                'mux'     => (int) ($this->pool['mux'] ?? 0),
+                // The multiplexed lanes read their sockets with plain recv(), past the stream's
+                // TLS layer, so a TLS connection with lanes would read ciphertext.
+                'mux'     => $this->usesTls($host, $config) ? 0 : (int) ($this->pool['mux'] ?? 0),
             ],
         ];
 
@@ -87,11 +152,24 @@ class AsyncPhpRedisConnector extends PhpRedisConnector
                 : $config['password'];
         }
 
+        // The constructor takes the TLS options flat, as RedisCluster does, where Laravel's
+        // documented form wraps them in `stream` or `ssl`.
         if (! is_null($context = Arr::get($config, 'context'))) {
-            $options['ssl'] = $context;
+            $options['ssl'] = $this->normalizeClusterContext($context);
         }
 
         return $options;
+    }
+
+    /**
+     * Whether the pool's connections speak TLS: a `tls://` or `ssl://` host, or any context,
+     * which phpredis takes for TLS on a host with no scheme.
+     */
+    private function usesTls(string $host, array $config): bool
+    {
+        $scheme = strtolower((string) parse_url($host, PHP_URL_SCHEME));
+
+        return in_array($scheme, ['tls', 'ssl'], true) || Arr::get($config, 'context') !== null;
     }
 
     /**

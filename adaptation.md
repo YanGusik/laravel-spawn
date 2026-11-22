@@ -42,8 +42,8 @@
 |---|---|---|
 | **Database / Eloquent** | `Connection::$transactions` — общий счётчик при изолированных PDO-соединениях | Трейт `CoroutineTransactions` — счётчик в `coroutine_context()` |
 | **View / Blade** | `View::share('errors')` из middleware утекает между корутинами | `AsyncViewFactory` — `share()`/`getShared()` через `current_context()` после `bootCompleted()` |
-| **Routing** | `Router::$current` / `$currentRequest` перезаписываются конкурентными запросами | `AsyncRouter` — хранение в `current_context()` после `bootCompleted()` |
-| **Translation** | `Translator::$locale` — singleton, `setLocale()` per-request перезаписывает для всех корутин | `AsyncTranslator` — locale в `current_context()`, `$loaded` кэш shared для производительности |
+| **Routing** | `Router::$current` / `$currentRequest` перезаписываются конкурентными запросами | `AsyncRouter` — хранение в `current_context()` после `bootCompleted()`; `respondWithRoute()` берёт запрос из контекста или контейнера и связывает копию маршрута |
+| **Translation** | `Translator::$locale` — singleton, `setLocale()` per-request перезаписывает для всех корутин | `AsyncTranslator` — locale в `current_context()`, `$loaded` кэш shared для производительности; выключатель обработки пропущенных ключей (`has()`, колбэк `handleMissingKeysUsing()`) — в контексте корутины |
 | **Events / Dispatcher** | `Event::defer()` флаг утекает между корутинами | Документировано как ограничение — user-space API, не вызывается в Laravel internals |
 | **Broadcasting** | `BroadcastManager` и драйверы stateless | Не требует фикса |
 | **Middleware** | Lifecycle — переиспользуются ли экземпляры? | Создаются заново через `make()` на каждый запрос. Не проблема |

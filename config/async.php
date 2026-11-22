@@ -86,6 +86,13 @@ return [
     |
     | Requires the TrueAsync build of phpredis. Redis Cluster is not pooled.
     |
+    | A connection with a serializer or compression also gets a second pool,
+    | with no multiplexing and no warm sockets, for the rate limiter's raw
+    | counters: it can open up to 'max' more sockets per connection and worker.
+    | A TLS host ('tls://', 'scheme' => 'tls') or any 'context' runs with 'mux'
+    | 0, because multiplexed sockets bypass TLS. A unix socket 'host' needs no
+    | 'port'.
+    |
     */
 
     'redis_pool' => [

@@ -161,6 +161,103 @@ class RedisPoolTest extends AsyncTestCase
         $plain->close();
     }
 
+    /**
+     * The pool's constructor takes the TLS options flat — each key goes to the `ssl` stream
+     * context as it is — while Laravel's documented form wraps them in `stream` (or `ssl`).
+     * Passed through wrapped, `verify_peer` and the rest never reach the handshake.
+     */
+    public function test_a_wrapped_tls_context_reaches_the_pool_flat(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true]);
+        $options = fn (array $context) => (fn (array $config) => $this->constructorOptions($config))
+            ->call($connector, ['host' => 'tls://redis.internal', 'port' => 6380, 'context' => $context]);
+
+        $flat = ['verify_peer' => false, 'cafile' => '/etc/ca.pem'];
+
+        $this->assertSame($flat, $options(['stream' => $flat])['ssl']);
+        $this->assertSame($flat, $options(['ssl' => $flat])['ssl']);
+        $this->assertSame($flat, $options($flat)['ssl']);
+    }
+
+    /**
+     * The pool's multiplexed lanes read their sockets with plain recv(), past the stream's TLS
+     * layer, so a TLS connection with lanes reads ciphertext. TLS runs without them.
+     */
+    public function test_tls_runs_without_multiplexed_lanes(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true, 'max' => 8, 'mux' => 2]);
+        $mux = fn (array $config) => (fn (array $config) => $this->constructorOptions($config))
+            ->call($connector, $config)['pool']['mux'];
+
+        $this->assertSame(0, $mux(['host' => 'redis.internal', 'context' => ['stream' => ['verify_peer' => false]]]));
+        $this->assertSame(0, $mux(['host' => 'tls://redis.internal']));
+        $this->assertSame(0, $mux(['host' => 'redis.internal', 'scheme' => 'tls']));
+        $this->assertSame(2, $mux(['host' => 'redis.internal']));
+    }
+
+    /**
+     * The rate limiter's raw pool opens nothing until a window sends a command: no warm sockets
+     * and no multiplexed lanes, whatever the configured pool keeps.
+     */
+    public function test_the_raw_pool_keeps_no_warm_sockets_and_no_lanes(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true, 'min' => 3, 'max' => 8, 'mux' => 2]);
+
+        $options = (fn (array $config) => $this->rawConstructorOptions($config))
+            ->call($connector, ['host' => 'redis.internal', 'port' => 6380, 'database' => 2]);
+
+        $this->assertSame(['enabled' => true, 'min' => 0, 'max' => 8, 'mux' => 0], $options['pool']);
+        $this->assertSame(['redis.internal', 6380, 2], [$options['host'], $options['port'], $options['database']]);
+    }
+
+    /**
+     * phpredis takes a host starting with `/` for a unix socket only when the port is below 1,
+     * and opens 6379 itself for a TCP host with port 0 — which is what the stock connector's
+     * missing port amounts to.
+     */
+    public function test_a_missing_port_leaves_the_choice_to_phpredis(): void
+    {
+        $connector = new AsyncPhpRedisConnector(['enabled' => true]);
+        $port = fn (array $config) => (fn (array $config) => $this->constructorOptions($config))
+            ->call($connector, $config)['port'];
+
+        $this->assertSame(0, $port(['host' => '/run/redis/redis.sock']));
+        $this->assertSame(0, $port(['host' => '/run/redis/redis.sock', 'port' => null]));
+        $this->assertSame(6380, $port(['host' => 'redis.internal', 'port' => 6380]));
+    }
+
+    public function test_a_unix_socket_without_a_port_reaches_the_server(): void
+    {
+        $socket = getenv('SPAWN_TEST_REDIS_SOCKET');
+
+        if (! is_string($socket) || ! file_exists($socket)) {
+            $this->markTestSkipped('SPAWN_TEST_REDIS_SOCKET names no Redis unix socket.');
+        }
+
+        $manager = new RedisManager(new \Illuminate\Container\Container(), 'phpredis', [
+            'default' => ['host' => $socket, 'database' => 0],
+        ]);
+        $manager->extend('phpredis', fn () => new AsyncPhpRedisConnector([
+            'enabled' => true, 'min' => 0, 'max' => 2, 'mux' => 0,
+        ]));
+
+        $this->assertTrue((bool) $manager->connection()->ping());
+    }
+
+    /**
+     * AsyncPhpRedisConnection routes `$client` through a property hook of its own. The day
+     * Laravel declares hooks or a type on that property, the subclass stops compiling or stops
+     * routing; this is where that is found.
+     */
+    public function test_laravel_leaves_the_client_property_plain(): void
+    {
+        $property = new \ReflectionProperty(\Illuminate\Redis\Connections\PhpRedisConnection::class, 'client');
+
+        $this->assertFalse($property->hasHooks());
+        $this->assertFalse($property->hasType());
+        $this->assertTrue((new \ReflectionProperty(\Spawn\Laravel\Redis\AsyncPhpRedisConnection::class, 'client'))->hasHooks());
+    }
+
     private function serverIsUp(): bool
     {
         $probe = new \Redis();
