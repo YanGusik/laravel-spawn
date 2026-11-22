@@ -150,4 +150,40 @@ class DebugbarIsolationTest extends AsyncTestCase
         $this->assertSame(['exc-a'], $results['a'], 'A sees only its own exception');
         $this->assertSame(['exc-b'], $results['b'], 'B sees only its own exception');
     }
+
+    /**
+     * One AsyncDebugbar per worker (#85, Issue 10): what ResetDebugbar sets on it for a request —
+     * the request itself, the id the bar is filed under — has to stay that request's while
+     * another request is served.
+     */
+    public function test_each_request_reports_its_own_request_and_id(): void
+    {
+        $app = $this->createApp();
+        $app->singleton('config', fn () => new \Illuminate\Config\Repository([
+            'debugbar' => ['enabled' => true, 'collectors' => []],
+        ]));
+
+        $debugbar = new \Spawn\Laravel\Debugbar\AsyncDebugbar($app, new \Illuminate\Http\Request());
+
+        $serve = static function (string $uri, int $holdMs) use ($debugbar): array {
+            \Spawn\Laravel\Foundation\RequestContext::begin();
+            $debugbar->setRequest(\Illuminate\Http\Request::create($uri, 'POST'));
+            $debugbar->reset();
+            $id = $debugbar->getCurrentRequestId();
+
+            delay($holdMs);
+
+            $meta = $debugbar->collectMetaData();
+
+            return [$meta['uri'], $meta['method'], $meta['id'] === $id];
+        };
+
+        $results = $this->runParallel([
+            'a' => fn () => $serve('/tenant-a/orders', 60),
+            'b' => fn () => $serve('/tenant-b/billing', 10),
+        ]);
+
+        $this->assertSame(['/tenant-a/orders', 'POST', true], $results['a']);
+        $this->assertSame(['/tenant-b/billing', 'POST', true], $results['b']);
+    }
 }
