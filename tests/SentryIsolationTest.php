@@ -5,6 +5,7 @@ namespace Spawn\Laravel\Tests;
 use Sentry\State\HubInterface;
 use Sentry\State\Scope;
 use Spawn\Laravel\Foundation\RequestContext;
+use Spawn\Laravel\Sentry\RequestRuntimeContextStorage;
 use Spawn\Laravel\Sentry\SentryRequest;
 
 use function Async\delay;
@@ -27,13 +28,16 @@ class SentryIsolationTest extends AsyncTestCase
         }
     }
 
-    private function worker(): \Spawn\Laravel\Foundation\AsyncApplication
+    /** @param  array<string, mixed>  $sentry */
+    private function worker(array $sentry = []): \Spawn\Laravel\Foundation\AsyncApplication
     {
         $app = $this->bootedApp([]);
         $app->instance('env', 'testing');
-        $app['config']->set('sentry', ['dsn' => null, 'tracing' => []]);
+        $app['config']->set('sentry', $sentry + ['dsn' => null, 'tracing' => []]);
         $app->register(\Sentry\Laravel\ServiceProvider::class);
         $app->make(HubInterface::class);
+        // LogManager builds a channel once and keeps it: the logger holds the hub it was given at boot.
+        $app->instance('test.sentry-logger', (new \Sentry\Laravel\LogChannel($app))([]));
         $app->enableAsyncMode();
 
         return $app;
@@ -75,6 +79,11 @@ class SentryIsolationTest extends AsyncTestCase
             'the container' => [static fn ($app) => $app->make(HubInterface::class)],
             'the facade' => [static fn ($app) => \Sentry\Laravel\Facade::getFacadeRoot()],
             'the global functions' => [static fn ($app) => \Sentry\SentrySdk::getCurrentHub()],
+            'the sentry alias' => [static fn ($app) => $app->make('sentry')],
+            'a type-hinted parameter' => [static fn ($app) => $app->call(static fn (HubInterface $hub) => $hub)],
+            'the log channel' => [static fn ($app) => (fn () => $this->hub)->call(
+                $app->make('test.sentry-logger')->getHandlers()[0],
+            )],
         ];
     }
 
@@ -124,9 +133,101 @@ class SentryIsolationTest extends AsyncTestCase
     {
         $this->worker();
 
-        $this->assertNull($this->inRequest(self::served(static function (): void {
+        $results = $this->inRequest(self::served(static function (): array {
+            $storage = new RequestRuntimeContextStorage();
             SentryRequest::end();
-        })));
+
+            // endContext() flushes only what remove() hands it.
+            return [$storage->remove(), $storage->get()];
+        }));
+
+        $this->assertNull($results[0], 'the second end gets no context to flush');
+        $this->assertNotNull($results[1], 'a coroutine that outlives the request still reports into it');
+    }
+
+    /**
+     * FrankenPHP may serve its next request in the scope of the last one: begin() marks the
+     * same context again, which still holds the context the last request released.
+     */
+    public function test_a_request_served_in_a_reused_scope_gets_a_context_of_its_own(): void
+    {
+        $app = $this->worker();
+
+        $results = $this->inRequest(static function () use ($app): array {
+            $first = self::served(function () use ($app) {
+                $app->make(HubInterface::class)->configureScope(fn (Scope $scope) => $scope->setUser(['id' => 'first']));
+
+                return \Sentry\SentrySdk::getCurrentRuntimeContext();
+            })();
+
+            $second = self::served(fn () => [
+                self::user($app->make(HubInterface::class)),
+                \Sentry\SentrySdk::getCurrentRuntimeContext(),
+                (new RequestRuntimeContextStorage())->remove(),
+            ])();
+
+            return [$first, ...$second];
+        });
+
+        [$first, $user, $second, $removed] = $results;
+
+        $this->assertNull($user, 'the first request\'s user');
+        $this->assertNotSame($first, $second);
+        $this->assertSame($second, $removed, 'its end flushes its own context');
+    }
+
+    /** SetRequestMiddleware binds the request's PSR-7 request for the events of that request. */
+    public function test_the_psr7_request_stays_in_its_request(): void
+    {
+        $app = $this->worker();
+        $key = \Sentry\Laravel\Http\LaravelRequestFetcher::CONTAINER_PSR7_INSTANCE_KEY;
+
+        $results = $this->runParallel([
+            'a' => self::served(function () use ($app, $key) {
+                $psr7 = new \stdClass();
+                $app->instance($key, $psr7);
+                delay(40);
+
+                return $app->make($key) === $psr7;
+            }),
+            'b' => self::served(function () use ($app, $key) {
+                delay(10);
+
+                return $app->bound($key);
+            }),
+        ]);
+
+        $this->assertSame(['a' => true, 'b' => false], $results);
+    }
+
+    public function test_a_transaction_the_middleware_started_in_one_request_is_not_another_requests(): void
+    {
+        $app = $this->worker(['traces_sample_rate' => 1.0]);
+        $app->register(\Sentry\Laravel\Tracing\ServiceProvider::class);
+
+        $transactionOf = static fn (object $middleware) => (fn () => $this->transaction)->call($middleware);
+
+        $results = $this->runParallel([
+            'a' => self::served(function () use ($app, $transactionOf) {
+                $middleware = $app->make(\Sentry\Laravel\Tracing\Middleware::class);
+                $middleware->handle(\Illuminate\Http\Request::create('/a'), static fn () => null);
+                delay(40);
+
+                return [$transactionOf($middleware), $app->make(HubInterface::class)->getTransaction()];
+            }),
+            'b' => self::served(function () use ($app, $transactionOf) {
+                delay(10);
+
+                return [
+                    $transactionOf($app->make(\Sentry\Laravel\Tracing\Middleware::class)),
+                    $app->make(HubInterface::class)->getTransaction(),
+                ];
+            }),
+        ]);
+
+        $this->assertNotNull($results['a'][0]);
+        $this->assertSame($results['a'][0], $results['a'][1], 'the hub of its own request carries it');
+        $this->assertSame([null, null], $results['b']);
     }
 
     public function test_each_request_has_its_own_tracing_middleware_and_transaction_finisher(): void

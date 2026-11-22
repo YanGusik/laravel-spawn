@@ -126,13 +126,13 @@ class TrueAsyncServer implements ServerInterface
          * `use (&$bound)` flag cannot be transferred into a worker thread. */
         $app->make(ServerMetrics::class)->useServer($server);
 
-        \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
-
-        $kernel = $app->make(Kernel::class);
-
         \Spawn\Laravel\Sentry\SentryRequest::start();
 
         try {
+            \Spawn\Laravel\Debugbar\ResetDebugbar::handle($app, $request);
+
+            $kernel = $app->make(Kernel::class);
+
             $laravelResponse = $kernel->handle($request);
 
             try {

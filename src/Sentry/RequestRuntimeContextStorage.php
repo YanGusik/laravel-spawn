@@ -25,6 +25,23 @@ final class RequestRuntimeContextStorage implements RuntimeContextStorageInterfa
 
     private ?RuntimeContext $outsideRequest = null;
 
+    /**
+     * Drops the context a previous request released in the context being marked now, so that
+     * Sentry starts a fresh one: FrankenPHP may serve the next request in the last one's scope.
+     */
+    public static function forgetReleased(): void
+    {
+        if (! RequestContext::inRequest()) {
+            return;
+        }
+
+        $context = RequestContext::current();
+
+        if ($context->findLocal(self::KEY)?->released === true) {
+            $context->unset(self::KEY);
+        }
+    }
+
     public function get(): ?RuntimeContext
     {
         if (! RequestContext::inRequest()) {

@@ -12,12 +12,12 @@
   "require-dev": {
     "barryvdh/laravel-debugbar": "^4.2",
     "inertiajs/inertia-laravel": "^3.0",
-    "laravel/mcp": "^1.0",
+    "laravel/mcp": "^1.2",
     "laravel/socialite": "^5.26",
     "laravel/telescope": "^5.19",
     "phpstan/phpstan": "^2.1",
     "phpunit/phpunit": "^11.0",
-    "sentry/sentry-laravel": "^4.0",
+    "sentry/sentry-laravel": "^4.31",
     "spatie/laravel-permission": "^7.2"
   },
   "autoload": {

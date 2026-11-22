@@ -9,12 +9,15 @@ use Sentry\SentrySdk;
  *
  * start() before the kernel handles the request; end() after terminate(), since the tracing
  * transaction finishes and the events flush in terminate(). Both do nothing without Sentry.
+ *
+ * @internal
  */
 final class SentryRequest
 {
     public static function start(): void
     {
         if (class_exists(SentrySdk::class) && method_exists(SentrySdk::class, 'startContext')) {
+            RequestRuntimeContextStorage::forgetReleased();
             SentrySdk::startContext();
         }
     }

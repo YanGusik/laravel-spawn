@@ -18,8 +18,8 @@ use Spawn\Laravel\Foundation\RequestContext;
  * The worker serves many coroutine-requests concurrently. Debugbar assumes
  * "one instance = one request", so we keep a single instance (one set of event
  * subscriptions, registered once) and move its per-request mutable state into
- * the request's context: accumulating collectors are context-backed, and the
- * transient injection flag is kept per request.
+ * the request's context: accumulating collectors are context-backed, and what
+ * ResetDebugbar and a render set for the request is kept per request.
  */
 class AsyncDebugbar extends LaravelDebugbar
 {
