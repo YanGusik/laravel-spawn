@@ -136,14 +136,19 @@ visibly; where none is named, nothing will notice the change but a reader.
    Registrations made through `Auth::resolved()` — the form real Sanctum uses — are
    correctly isolated, because `afterResolving` runs after the seeder.
 2. **The configured list of per-request services is read for the last time at
-   `enableAsyncMode()`.** A deferred provider that merges its own entries into
-   `async.scoped_services` while serving is never seen; before the latch it was, at the
-   cost of a config read on every resolve that missed. Not pinned by a test.
+   `enableAsyncMode()`.** Deferred providers load at worker start, before it, so their
+   entries in `async.scoped_services` are seen. A provider registered while serving — one
+   Laravel defers until an event (`when()`), or one a request registers itself — that merges
+   its own entries is never seen; before the latch it was, at the cost of a config read on
+   every resolve that missed. Not pinned by a test.
 3. **A registration made after serving begins reaches one coroutine.** Prototypes are
-   captured once, at `enableAsyncMode()`. A deferred provider loaded inside a request is
-   the usual way to hit this: it is marked loaded and never registers again.
-4. **`scopedSingleton()` services have no prototype**, so a seeder for one never runs —
-   there is no boot-time instance by definition.
+   captured once, at `enableAsyncMode()`. Deferred providers load at worker start; a
+   provider Laravel defers until an event (`when()`), or one a request registers itself, is
+   the way to hit this: it is marked loaded and never registers again. The worker names such
+   a provider in the error log, and `async.boot_providers` registers it at start instead.
+4. **A `scopedSingleton()` service has a prototype only when boot built it**, so a seeder
+   for one runs only if something resolved it before serving began; otherwise there is no
+   boot-time instance to copy from.
 5. **A seeder only runs for an alias the container treats as scoped.** On any other
    alias it is silently never called.
 6. **A facade of an alias that becomes per-request after start-up** is proxied from the

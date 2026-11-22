@@ -38,7 +38,8 @@ final class WorkerBootstrap
          * register and boot inside that request: its configuration, listeners and the
          * extensions of a per-request service would be that request's alone. Loaded here,
          * it is configuration like any other provider's, and comes first so the pools see
-         * the connections it adds. */
+         * the connections it adds. As for every other provider, runningInConsole() is still
+         * true here: the server is started by artisan. */
         $app->loadDeferredProviders();
 
         // Providers Laravel registers only on an event, and any other an application wants at start.

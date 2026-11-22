@@ -23,8 +23,10 @@ final class DeferredSdkServiceProvider extends ServiceProvider implements Deferr
     {
         $this->app['events']->listen('sdk.ping', fn () => 'pong');
 
-        $this->app->make(\Laravel\Socialite\Contracts\Factory::class)
-            ->extend('sdk', fn () => new \stdClass());
+        if (interface_exists(\Laravel\Socialite\Contracts\Factory::class)) {
+            $this->app->make(\Laravel\Socialite\Contracts\Factory::class)
+                ->extend('sdk', fn () => new \stdClass());
+        }
     }
 
     public function provides(): array

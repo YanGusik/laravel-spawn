@@ -104,13 +104,14 @@ class AsyncApplication extends Application
     /**
      * Outside async mode, the objects of scopedSingleton() aliases that have no binding of their own:
      * alias => object, one per alias until forgetScopedInstances(), as Laravel's scoped() keeps them.
-     * Never in $this->instances, so no prototype is captured from it.
+     * Never in $this->instances: enableAsyncMode() takes the prototype from $bootScopedObjects.
      */
     private array $syncScopedInstances = [];
 
     /**
-     * The objects $syncScopedInstances held when async mode started: no request owns them, and the
-     * capture audit has to recognise one a singleton built at boot still holds.
+     * The objects $syncScopedInstances held when async mode started: no request owns them. They are
+     * the prototypes of their aliases, and the capture audit has to recognise one a singleton built
+     * at boot still holds.
      *
      * @var array<string, object>
      */
@@ -977,15 +978,6 @@ class AsyncApplication extends Application
     }
 
     /**
-     * Report async mode being switched on with providers registered but not booted.
-     *
-     * Unconditional, unlike the diagnostics below: every boot-time registration made
-     * from that point on is lost, the loss is silent, and by the time anything shows
-     * it looks like the registration was never written. The HTTP kernel stands in for
-     * "this is a real application": a bare container assembled by a test has no
-     * providers of its own to lose.
-     */
-    /**
      * A provider registered while a request is served registers and boots inside it.
      *
      * Its configuration, listeners and the extensions of per-request services are then that
@@ -1020,6 +1012,15 @@ class AsyncApplication extends Application
             .'): the first request to use one registers it inside that request alone');
     }
 
+    /**
+     * Report async mode being switched on with providers registered but not booted.
+     *
+     * Unconditional, unlike the diagnostics below: every boot-time registration made
+     * from that point on is lost, the loss is silent, and by the time anything shows
+     * it looks like the registration was never written. The HTTP kernel stands in for
+     * "this is a real application": a bare container assembled by a test has no
+     * providers of its own to lose.
+     */
     private function reportPrematureAsyncMode(): void
     {
         if ($this->isBooted() || ! $this->bound(HttpKernel::class)) {

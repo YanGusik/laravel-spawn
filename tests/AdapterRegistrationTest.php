@@ -31,6 +31,7 @@ class AdapterRegistrationTest extends AsyncTestCase
         $app = new AsyncApplication(sys_get_temp_dir());
 
         $app->instance('files', new Filesystem());
+        $app->instance('env', 'testing');
         $app->instance('config', new Repository([
             'async'      => ['scoped_services' => [], 'db_pool' => ['enabled' => false]],
             'cache'      => ['default' => 'array', 'stores' => ['array' => ['driver' => 'array']]],
@@ -114,6 +115,42 @@ class AdapterRegistrationTest extends AsyncTestCase
 
         $this->assertInstanceOf(AppViewFactory::class, $app->make('view'));
         $this->assertStringContainsString('view is '.AppViewFactory::class, $logged);
+    }
+
+    public function test_the_inertia_factory_is_the_adapter_when_inertia_registers_after_the_package(): void
+    {
+        $app = $this->worker([EventServiceProvider::class, AsyncServiceProvider::class, \Inertia\ServiceProvider::class]);
+
+        $this->assertInstanceOf(\Spawn\Laravel\Inertia\AsyncResponseFactory::class, $app->make(\Inertia\ResponseFactory::class));
+    }
+
+    public function test_a_service_resolved_before_the_package_registered_is_named(): void
+    {
+        $logged = $this->logged(function (): void {
+            $this->worker([
+                EventServiceProvider::class,
+                CacheServiceProvider::class,
+                PermissionServiceProvider::class,
+            ], static function (AsyncApplication $app): void {
+                $app->make(PermissionRegistrar::class);
+                $app->register(AsyncServiceProvider::class);
+            });
+        });
+
+        $this->assertStringContainsString(PermissionRegistrar::class.' was resolved before', $logged);
+    }
+
+    public function test_deferred_services_left_unloaded_when_async_mode_starts_are_named(): void
+    {
+        $app = new AsyncApplication(sys_get_temp_dir());
+        $app->instance('config', new Repository(['async' => ['scoped_services' => []]]));
+        $app->instance(\Illuminate\Contracts\Http\Kernel::class, new \stdClass());
+        $app->addDeferredServices(['sdk.client' => \Spawn\Laravel\Tests\Fixtures\DeferredSdkServiceProvider::class]);
+
+        $logged = $this->logged(static fn () => $app->enableAsyncMode());
+
+        $this->assertStringContainsString('deferred providers not loaded', $logged);
+        $this->assertStringContainsString(\Spawn\Laravel\Tests\Fixtures\DeferredSdkServiceProvider::class, $logged);
     }
 
     /**
