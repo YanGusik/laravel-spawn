@@ -19,21 +19,27 @@ use Spawn\Laravel\Foundation\RequestContext;
  * "one instance = one request", so we keep a single instance (one set of event
  * subscriptions, registered once) and move its per-request mutable state into
  * the request's context: accumulating collectors are context-backed, and the
- * transient injection flag is hydrated per request.
+ * transient injection flag is kept per request.
  */
 class AsyncDebugbar extends LaravelDebugbar
 {
     /**
      * What ResetDebugbar and a render set for one request on the one instance: the request,
-     * whether the bar is on for it, the id and the collected snapshot it is filed under, the
-     * HTTP driver built from the request, and two flags. Each lives in the request's context;
-     * the declared properties are unset so that every read of the parent classes reaches it.
+     * whether the bar is on for it, the id it is filed under, the HTTP driver built from the
+     * request, whether its storage is open, and whether its response was already injected — a
+     * flag that spans reset() to handleResponse(), so a shared one would suppress another
+     * request's injection. Each lives in the request's context; the declared properties are
+     * unset so that every read of the parent classes reaches it. Each is only ever assigned
+     * whole: a property the parent writes by key cannot be served this way.
      */
     private const PER_REQUEST = [
-        'request', 'enabled', 'storageOpen', 'responseIsModified', 'data', 'requestId', 'httpDriver',
+        'request', 'enabled', 'storageOpen', 'responseIsModified', 'requestId', 'httpDriver',
     ];
 
     private const CTX_PREFIX = 'debugbar.';
+
+    /** Not one of PER_REQUEST: collect() writes into it by key, which an overloaded property cannot take. */
+    private const CTX_DATA = 'debugbar.data';
 
     /**
      * The values outside any request (artisan, a queue job, boot): those the constructor left.
@@ -123,6 +129,31 @@ class AsyncDebugbar extends LaravelDebugbar
     public function isStorageOpen(Request $request): bool
     {
         return false;
+    }
+
+    /**
+     * The collected snapshot is per-request. The base class caches it in a shared
+     * $this->data and getData() reuses it while non-null — so without this a
+     * concurrently-served request would render another request's snapshot. With
+     * storage disabled collect() no longer yields, so it is safe to key by context.
+     */
+    public function collect(): array
+    {
+        $data = parent::collect();
+        RequestContext::current()->set(self::CTX_DATA, $data, replace: true);
+
+        return $data;
+    }
+
+    public function getData(): array
+    {
+        $data = RequestContext::current()->find(self::CTX_DATA);
+
+        if ($data === null) {
+            $data = $this->collect();
+        }
+
+        return $data;
     }
 
     /**

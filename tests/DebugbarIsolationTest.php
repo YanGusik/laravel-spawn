@@ -186,4 +186,26 @@ class DebugbarIsolationTest extends AsyncTestCase
         $this->assertSame(['/tenant-a/orders', 'POST', true], $results['a']);
         $this->assertSame(['/tenant-b/billing', 'POST', true], $results['b']);
     }
+
+    public function test_collect_inside_a_request_keeps_what_the_collectors_gathered(): void
+    {
+        $app = $this->createApp();
+        $app->singleton('config', fn () => new \Illuminate\Config\Repository([
+            'debugbar' => ['enabled' => true, 'collectors' => []],
+        ]));
+
+        $debugbar = new \Spawn\Laravel\Debugbar\AsyncDebugbar($app, new \Illuminate\Http\Request());
+        $debugbar->addCollector(new MessagesCollector('notes'));
+
+        $data = $this->inRequest(function () use ($debugbar) {
+            \Spawn\Laravel\Foundation\RequestContext::begin();
+            $debugbar->reset();
+            $debugbar->getCollector('notes')->addMessage('kept');
+
+            return $debugbar->getData();
+        });
+
+        $this->assertArrayHasKey('notes', $data);
+        $this->assertSame(1, $data['notes']['count']);
+    }
 }
