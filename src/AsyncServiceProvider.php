@@ -28,6 +28,8 @@ class AsyncServiceProvider extends ServiceProvider
         $this->registerInertiaAdapter();
         $this->registerSocialiteAdapter();
         $this->registerDebugbarAdapter();
+        $this->registerMcpAdapter();
+        $this->registerSentryAdapter();
         $this->registerViewAdapter();
         $this->registerViteAdapter();
         $this->registerLogContextAdapter();
@@ -74,6 +76,69 @@ class AsyncServiceProvider extends ServiceProvider
         if ($this->app->resolved(\Illuminate\Contracts\Http\Kernel::class)) {
             $prepend($this->app->make(\Illuminate\Contracts\Http\Kernel::class));
         }
+    }
+
+    private function registerSentryAdapter(): void
+    {
+        if (! interface_exists(\Sentry\State\RuntimeContextStorageInterface::class)
+            || ! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        // Before any request starts a context: Sentry discards the active one when this changes.
+        \Sentry\SentrySdk::setRuntimeContextStorage(new \Spawn\Laravel\Sentry\RequestRuntimeContextStorage());
+
+        // The container's hub is the one boot built, which every request's hub is cloned from; the
+        // Facade, a type-hinted HubInterface and the log channel reach the request's through the adapter.
+        // sentry-laravel hands its own hub to SentrySdk inside the factory, before this runs.
+        $this->app->extend(\Sentry\State\HubInterface::class, static fn () => \Sentry\State\HubAdapter::getInstance());
+
+        // sentry-laravel subscribes its listeners in boot(), so they are all there once the app has booted.
+        $this->app->booted(static function ($app): void {
+            if ($app['events'] instanceof \Illuminate\Events\Dispatcher) {
+                \Spawn\Laravel\Sentry\PerRequestListeners::wrap($app['events']);
+            }
+        });
+
+        if (class_exists(\Sentry\Laravel\Tracing\Middleware::class)) {
+            // The transaction and spans of the request it started.
+            $this->app->scopedSingleton(
+                \Sentry\Laravel\Tracing\Middleware::class,
+                fn ($app) => new \Sentry\Laravel\Tracing\Middleware(
+                    ($app['config']->get('sentry.tracing.continue_after_response') ?? true) === true,
+                ),
+            );
+            $this->app->scopedSingleton(
+                \Sentry\Laravel\Tracing\TransactionFinisher::class,
+                fn ($app) => $app->build(\Sentry\Laravel\Tracing\TransactionFinisher::class),
+            );
+        }
+    }
+
+    private function registerMcpAdapter(): void
+    {
+        if (! class_exists(\Laravel\Mcp\Client\ClientManager::class)
+            || ! $this->app instanceof \Spawn\Laravel\Foundation\AsyncApplication) {
+            return;
+        }
+
+        // The manager keeps the clients it connected, and the terminating callback of laravel/mcp
+        // disconnects them at the end of each request: one manager per request, as under php-fpm.
+        $this->app->scopedSingleton(
+            \Laravel\Mcp\Client\ClientManager::class,
+            static fn () => new \Laravel\Mcp\Client\ClientManager(),
+        );
+
+        // Mcp::registerClient() in a provider's boot() registers on the boot-time manager. Its
+        // factories are configuration; its connected clients are one request's sessions.
+        $this->app->scopedSeeder(
+            \Laravel\Mcp\Client\ClientManager::class,
+            static function (object $manager, object $bootManager): void {
+                (function (object $bootManager): void {
+                    $this->factories = $bootManager->factories + $this->factories;
+                })->call($manager, $bootManager);
+            },
+        );
     }
 
     private function registerDebugbarAdapter(): void

@@ -46,7 +46,15 @@ In async mode, multiple HTTP requests execute concurrently inside a single PHP w
 | **inertiajs/inertia-laravel** | [`AsyncResponseFactory`](src/Inertia/AsyncResponseFactory.php) | sharedProps, rootView, version, encryptHistory, urlResolver |
 | **laravel/socialite** | `scopedSingleton` (in `AsyncServiceProvider`) | Fresh manager per coroutine (drivers cache stale request) |
 | **laravel/telescope** | [`CoroutineSafeRecording`](src/Telescope/CoroutineSafeRecording.php) trait + class substitution | entriesQueue, updatesQueue, shouldRecord per coroutine |
-| **barryvdh/laravel-debugbar** | `scopedSingleton` (in `AsyncServiceProvider`) | Fresh debugbar + all collectors per coroutine |
+| **barryvdh/laravel-debugbar** | [`AsyncDebugbar`](src/Debugbar/AsyncDebugbar.php) | One instance per worker; the request, on/off, request id, HTTP driver, injection flag, collected data and the accumulating collectors per request; the CSP nonce set for each render |
+| **laravel/mcp** | `scopedSingleton` + `scopedSeeder` (in `AsyncServiceProvider`) | A client manager per request, with the client factories registered at boot |
+| **sentry/sentry-laravel** | [`RequestRuntimeContextStorage`](src/Sentry/RequestRuntimeContextStorage.php), `HubAdapter` under `HubInterface` | Hub, scope, breadcrumbs and transaction per request, through the facade, the container, the log channel and the global functions; the tracing middleware and transaction finisher per request; a copy of each event listener per request ([`PerRequestListeners`](src/Sentry/PerRequestListeners.php)), so the spans of database transactions, HTTP client calls, cache commands and queued jobs close in their own request |
+
+The coroutines a request spawns share its Sentry hub: there is no hook to give each a hub of
+its own. One that traces its own work starts a span with `$parent->startChild()` and finishes
+it; `setSpan()` from concurrent coroutines replaces the one current span the others read too.
+Livewire's tracing hooks are registered on Livewire's own manager, not the event dispatcher,
+and stay one per worker.
 
 ---
 

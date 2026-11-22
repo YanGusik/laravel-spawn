@@ -18,17 +18,44 @@ use Spawn\Laravel\Foundation\RequestContext;
  * The worker serves many coroutine-requests concurrently. Debugbar assumes
  * "one instance = one request", so we keep a single instance (one set of event
  * subscriptions, registered once) and move its per-request mutable state into
- * the request's context: accumulating collectors are context-backed, and the
- * transient injection flag is hydrated per request.
+ * the request's context: accumulating collectors are context-backed, and what
+ * ResetDebugbar and a render set for the request is kept per request.
  */
 class AsyncDebugbar extends LaravelDebugbar
 {
-    private const CTX_RESPONSE_MODIFIED = 'debugbar.responseIsModified';
+    /**
+     * What ResetDebugbar and a render set for one request on the one instance: the request,
+     * whether the bar is on for it, the id it is filed under, the HTTP driver built from the
+     * request, whether its storage is open, and whether its response was already injected — a
+     * flag that spans reset() to handleResponse(), so a shared one would suppress another
+     * request's injection. Each lives in the request's context; the declared properties are
+     * unset so that every read of the parent classes reaches it. Each is only ever assigned
+     * whole: a property the parent writes by key cannot be served this way.
+     */
+    private const PER_REQUEST = [
+        'request', 'enabled', 'storageOpen', 'responseIsModified', 'requestId', 'httpDriver',
+    ];
+
+    private const CTX_PREFIX = 'debugbar.';
+
+    /** Not one of PER_REQUEST: collect() writes into it by key, which an overloaded property cannot take. */
     private const CTX_DATA = 'debugbar.data';
+
+    /**
+     * The values outside any request (artisan, a queue job, boot): those the constructor left.
+     *
+     * @var array<string, mixed>
+     */
+    private array $outsideRequest = [];
 
     public function __construct(Application $app, Request $request)
     {
         parent::__construct($app, $request);
+
+        foreach (self::PER_REQUEST as $property) {
+            $this->outsideRequest[$property] = $this->$property;
+            unset($this->$property);
+        }
 
         // Accumulating collectors gather data across the request's I/O yields, so
         // their storage must be per-coroutine. These context-backed subclasses stay
@@ -39,19 +66,53 @@ class AsyncDebugbar extends LaravelDebugbar
         $this->exceptionsCollector = new AsyncExceptionsCollector();
     }
 
-    public function handleResponse(Request $request, SymfonyResponse $response): SymfonyResponse
+    /** Must not suspend: PHP guards __get against re-entry per object and property, not per coroutine. */
+    public function __get(string $name): mixed
     {
-        // responseIsModified guards double-injection of one response. It spans the
-        // gap between reset() and here, so it must be per-context — otherwise a flag
-        // set while serving one request would suppress injection in another.
-        // handleResponse itself does not yield, so hydrating around the parent call is safe.
-        $this->responseIsModified = (bool) RequestContext::current()->find(self::CTX_RESPONSE_MODIFIED);
+        if (! in_array($name, self::PER_REQUEST, true)) {
+            throw new \LogicException('Undefined property '.static::class.'::$'.$name);
+        }
 
-        $result = parent::handleResponse($request, $response);
+        if (! RequestContext::inRequest()) {
+            return $this->outsideRequest[$name];
+        }
 
-        RequestContext::current()->set(self::CTX_RESPONSE_MODIFIED, $this->responseIsModified, replace: true);
+        $context = RequestContext::current();
+        $key = self::CTX_PREFIX.$name;
 
-        return $result;
+        return $context->has($key) ? $context->get($key) : $this->outsideRequest[$name];
+    }
+
+    public function __set(string $name, mixed $value): void
+    {
+        if (! in_array($name, self::PER_REQUEST, true)) {
+            throw new \LogicException('Undefined property '.static::class.'::$'.$name);
+        }
+
+        if (! RequestContext::inRequest()) {
+            $this->outsideRequest[$name] = $value;
+
+            return;
+        }
+
+        RequestContext::current()->set(self::CTX_PREFIX.$name, $value, replace: true);
+    }
+
+    public function __isset(string $name): bool
+    {
+        return in_array($name, self::PER_REQUEST, true) && $this->__get($name) !== null;
+    }
+
+    /**
+     * The renderer is one per worker and keeps the nonce it was given; the parent sets one only
+     * while none is set, which leaves a second request rendering with the first one's nonce and
+     * its own Content-Security-Policy refusing the bar. Rendering does not suspend.
+     */
+    public function injectDebugbar(SymfonyResponse $response): void
+    {
+        $this->getJavascriptRenderer()->setCspNonce($this->detectCspNonce());
+
+        parent::injectDebugbar($response);
     }
 
     /**

@@ -61,6 +61,7 @@ class FrankenPhpServer implements ServerInterface
                 $request = $this->buildRequest($frankenRequest);
 
                 RequestContext::current()->set(ScopedService::REQUEST, $request);
+                \Spawn\Laravel\Sentry\SentryRequest::start();
 
                 \Spawn\Laravel\Debugbar\ResetDebugbar::handle($this->app, $request);
 
@@ -101,6 +102,7 @@ class FrankenPhpServer implements ServerInterface
                 $frankenResponse->end();
             } finally {
                 TransactionSweep::afterRequest($this->app);
+                \Spawn\Laravel\Sentry\SentryRequest::end();
             }
         });
     }
