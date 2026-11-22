@@ -104,13 +104,14 @@ class AsyncApplication extends Application
     /**
      * Outside async mode, the objects of scopedSingleton() aliases that have no binding of their own:
      * alias => object, one per alias until forgetScopedInstances(), as Laravel's scoped() keeps them.
-     * Never in $this->instances, so no prototype is captured from it.
+     * Never in $this->instances: enableAsyncMode() takes the prototype from $bootScopedObjects.
      */
     private array $syncScopedInstances = [];
 
     /**
-     * The objects $syncScopedInstances held when async mode started: no request owns them, and the
-     * capture audit has to recognise one a singleton built at boot still holds.
+     * The objects $syncScopedInstances held when async mode started: no request owns them. They are
+     * the prototypes of their aliases, and the capture audit has to recognise one a singleton built
+     * at boot still holds.
      *
      * @var array<string, object>
      */
@@ -179,6 +180,7 @@ class AsyncApplication extends Application
 
         $this->captureScopedPrototypes();
         $this->reportPrematureAsyncMode();
+        $this->reportDeferredProviders();
 
         FacadeCache::stopCaching();
 
@@ -962,10 +964,52 @@ class AsyncApplication extends Application
         foreach ($this->scopedAliases() as $alias) {
             // Never a second time: extend() keeps the template up to date while serving,
             // and re-reading the container instance would undo that.
-            if (isset($this->instances[$alias]) && ! isset($this->scopedPrototypes[$alias])) {
-                $this->scopedPrototypes[$alias] = $this->instances[$alias];
+            if (isset($this->scopedPrototypes[$alias])) {
+                continue;
+            }
+
+            // A scopedSingleton() with no binding of its own was built through its factory and kept apart.
+            $prototype = $this->instances[$alias] ?? $this->bootScopedObjects[$alias] ?? null;
+
+            if ($prototype !== null) {
+                $this->scopedPrototypes[$alias] = $prototype;
             }
         }
+    }
+
+    /**
+     * A provider registered while a request is served registers and boots inside it.
+     *
+     * Its configuration, listeners and the extensions of per-request services are then that
+     * request's alone, and the next request finds none of them. Laravel does this for a
+     * provider it defers until an event (`when()`), and a request may call register() itself.
+     */
+    public function register($provider, $force = false)
+    {
+        $name = is_string($provider) ? $provider : $provider::class;
+
+        if ($this->asyncMode && RequestContext::inRequest() && $this->getProvider($provider) === null) {
+            error_log("[async] {$name} was registered while a request was served: what it configures stays in "
+                ."that request. List it in async.boot_providers to register it at worker start");
+        }
+
+        return parent::register($provider, $force);
+    }
+
+    /**
+     * Deferred services still unloaded when async mode starts: WorkerBootstrap loads them, so these
+     * are from a start-up that switched async mode on itself, and the first request to ask for one
+     * registers its provider inside that request.
+     */
+    private function reportDeferredProviders(): void
+    {
+        if ($this->getDeferredServices() === [] || ! $this->bound(HttpKernel::class)) {
+            return;
+        }
+
+        error_log('[async] async mode was enabled with deferred providers not loaded ('
+            .implode(', ', array_unique(array_values($this->getDeferredServices())))
+            .'): the first request to use one registers it inside that request alone');
     }
 
     /**

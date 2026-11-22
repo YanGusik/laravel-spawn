@@ -85,6 +85,19 @@ class CaptureSweepTest extends AsyncTestCase
         $this->assertSame('/first', reset($found)['url']);
     }
 
+    public function test_the_swept_request_is_served_as_a_request(): void
+    {
+        $app = $this->bootedApp();
+        $inRequest = null;
+
+        // The adapters that keep fakes and log context per request take their in-request branch only here.
+        (new CaptureSweep($app, function () use (&$inRequest): void {
+            $inRequest = \Spawn\Laravel\Foundation\RequestContext::inRequest();
+        }))->over(['/orders']);
+
+        $this->assertTrue($inRequest);
+    }
+
     public function test_the_worker_sees_nothing_before_a_request_is_driven(): void
     {
         $app = $this->bootedApp();
