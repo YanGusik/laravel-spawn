@@ -40,7 +40,7 @@ final class WorkerBootstrap
          * it is configuration like any other provider's, and comes first so the pools see
          * the connections it adds. As for every other provider, runningInConsole() is still
          * true here: the server is started by artisan. */
-        $app->loadDeferredProviders();
+        self::loadDeferredProviders($app);
 
         // Providers Laravel registers only on an event, and any other an application wants at start.
         foreach ($app->make('config')->get('async.boot_providers', []) as $provider) {
@@ -174,7 +174,26 @@ final class WorkerBootstrap
      * being handed to coroutine after coroutine. The query duration handlers boot registered
      * on a purged connection move to the one that replaces it.
      */
-    private static function configureDatabasePool(Application $app): void
+    /**
+     * Register the provider of every deferred service the application has not filled itself.
+     *
+     * Laravel loads a deferred provider only for a service with no instance yet, so an instance()
+     * put in at boot wins over the provider's binding; loading them all would replace it.
+     */
+    private static function loadDeferredProviders(Application $app): void
+    {
+        if ($app instanceof \Illuminate\Foundation\Application) {
+            $app->setDeferredServices(array_filter(
+                $app->getDeferredServices(),
+                static fn (string $service): bool => ! $app->resolved($service),
+                ARRAY_FILTER_USE_KEY,
+            ));
+        }
+
+        $app->loadDeferredProviders();
+    }
+
+        private static function configureDatabasePool(Application $app): void
     {
         $config = $app->make('config');
         $pool   = $config->get('async.db_pool', []);

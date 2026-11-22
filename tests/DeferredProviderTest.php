@@ -96,4 +96,17 @@ class DeferredProviderTest extends AsyncTestCase
 
         $this->assertTrue($this->inRequest(fn () => $app['config']->get('event_loaded.ready')));
     }
+
+    public function test_an_instance_the_application_put_in_for_a_deferred_service_is_kept(): void
+    {
+        $app = $this->bootedApp([]);
+        $app->addDeferredServices(['sdk.client' => DeferredSdkServiceProvider::class]);
+        $mine = new \ArrayObject(['endpoint' => 'mine']);
+        $app->instance('sdk.client', $mine);
+
+        WorkerBootstrap::run($app);
+
+        // Laravel loads a deferred provider only for a service that has no instance yet.
+        $this->assertSame($mine, $this->inRequest(fn () => $app->make('sdk.client')));
+    }
 }
