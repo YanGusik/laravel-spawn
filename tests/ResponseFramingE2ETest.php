@@ -29,5 +29,8 @@ class ResponseFramingE2ETest extends TestCase
 
         $this->assertSame(0, $code, "e2e runner exited non-zero:\n{$output}");
         $this->assertStringContainsString('0 failed', $output, $output);
+        // The server thread writes to this process's standard output: a body that went there leaked.
+        $this->assertStringNotContainsString('BODY-AFTER-POP', $output);
+        $this->assertStringNotContainsString('LEAKED-TO-STDOUT', $output);
     }
 }

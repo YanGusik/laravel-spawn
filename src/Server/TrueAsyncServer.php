@@ -607,9 +607,9 @@ class TrueAsyncServer implements ServerInterface
      * Chunked framing, with the peer's backpressure reaching this coroutine. What the body is
      * stays Symfony's: ranges, the deferred deletion of a download, the generator of a stream.
      *
-     * Rethrows while the buffer still holds everything, so the caller can answer 500. Past the
-     * first chunk a failure is only loggable: chunked cannot be disowned mid-flight. A peer
-     * that hangs up counts as an ordinary end.
+     * Rethrows, so the caller logs the failure and answers 500 while nothing is on the wire yet.
+     * Past the first chunk the response is aborted first: the server would otherwise end it with
+     * the zero-length chunk of a whole body. A peer that hangs up counts as an ordinary end.
      */
     private function streamContent(HttpResponse $taResponse, SymfonyResponse $response): void
     {
@@ -621,12 +621,21 @@ class TrueAsyncServer implements ServerInterface
             $taResponse->setNoCompression();
         }
 
-        $delivered = StreamedBody::forward(
-            $response,
-            static function (string $chunk) use ($taResponse): void {
-                $taResponse->write($chunk);
+        try {
+            $delivered = StreamedBody::forward(
+                $response,
+                static function (string $chunk) use ($taResponse): void {
+                    $taResponse->write($chunk);
+                }
+            );
+        } catch (\Throwable $e) {
+            // abort() came with server 0.17.0; it leaves a response that never started streaming alone.
+            if ($taResponse->isHeadersSent() && method_exists($taResponse, 'abort')) {
+                $taResponse->abort();
             }
-        );
+
+            throw $e;
+        }
 
         if (! $delivered) {
             return;

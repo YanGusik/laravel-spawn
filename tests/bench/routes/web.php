@@ -234,3 +234,65 @@ $router->get('/framing/stream-fails-early', fn () => response()->stream(function
     throw new \RuntimeException('secret: SQLSTATE password=hunter2');
 }));
 
+// One forwarding buffer's worth, then a wait: flush() alone reaches no output handler, so the
+// bytes have to leave once the buffer is full, not when the callback returns.
+$router->get('/framing/flush-then-wait', fn () => response()->stream(function () {
+    echo str_repeat('F', 4096);
+    flush();
+    \Async\delay(1500);
+    echo 'end';
+}, 200, ['Content-Type' => 'text/plain']));
+
+// PDF and spreadsheet writers clear stray output with one ob_end_clean() before they stream,
+// which pops the forwarding buffer the body is written into.
+$router->get('/framing/pop-once', fn () => response()->stream(function () {
+    echo 'STRAY';
+    if (ob_get_level() > 0) {
+        ob_end_clean();
+    }
+    echo 'BODY-AFTER-POP';
+}, 200, ['Content-Type' => 'text/plain']));
+
+// The same, then a buffer of the callback's own.
+$router->get('/framing/pop-then-buffer', fn () => response()->stream(function () {
+    ob_end_clean();
+    ob_start();
+    echo 'OWN';
+    ob_end_flush();
+    echo 'TAIL';
+}, 200, ['Content-Type' => 'text/plain']));
+
+// Every buffer popped: nothing in userland can put one back, so what follows would reach the
+// worker's standard output instead of the client.
+$router->get('/framing/pop-all', fn () => response()->stream(function () {
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+    echo 'LEAKED-TO-STDOUT';
+}, 200, ['Content-Type' => 'text/plain']));
+
+// An endless event stream; each event bumps a counter the runner reads after it hangs up.
+$router->get('/framing/sse-forever', fn () => response()->eventStream(function () {
+    // The runner and this worker thread share a process, so the pid names one run's file.
+    $counter = sys_get_temp_dir() . '/spawn-framing-sse-ticks-' . getmypid();
+    for ($tick = 1; ; $tick++) {
+        file_put_contents($counter, (string) $tick);
+        yield "tick {$tick}";
+        \Async\delay(20);
+    }
+}));
+
+// A body that fails once its first chunk is on the wire: too late for a 500, and the client must
+// not take what it got for the whole body.
+$router->get('/framing/stream-throws-late', fn () => response()->stream(function () {
+    echo str_repeat('L', 5000);
+    throw new \RuntimeException('body callback failed late');
+}, 200, ['Content-Type' => 'text/plain']));
+
+// The same for a body that pops every buffer after its first chunk went out.
+$router->get('/framing/pop-all-late', fn () => response()->stream(function () {
+    echo str_repeat('L', 5000);
+    while (ob_get_level() > 0) {
+        ob_end_flush();
+    }
+}, 200, ['Content-Type' => 'text/plain']));
